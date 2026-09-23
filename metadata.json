@@ -1,0 +1,6 @@
+{
+  "name": "ECSv1.0",
+  "description": "ECSv1.0 - Professional Embedded Electronics Simulation Platform with Digital Multimeter and Oscilloscope instruments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
