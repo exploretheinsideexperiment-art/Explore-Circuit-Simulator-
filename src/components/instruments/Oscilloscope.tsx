@@ -7,6 +7,7 @@ import {
 import { CircuitComponent, Wire } from '../../types';
 import { PinState } from '../../engine/circuit';
 import { getAllAvailablePins } from './instrumentUtils';
+import { FunctionGeneratorOutputState, WaveformType } from './FunctionGenerator';
 
 interface OscilloscopeProps {
   isOpen: boolean;
@@ -15,13 +16,17 @@ interface OscilloscopeProps {
   wires: Wire[];
   pinStates: Record<string, PinState>;
   isRunning: boolean;
+  functionGenState?: FunctionGeneratorOutputState | null;
+  forcedCh1Pin?: { compId: string; pinId: string } | null;
+  onCh1PinChange?: (pin: { compId: string; pinId: string } | null) => void;
+  onOpenFunctionGenerator?: () => void;
 }
 
 // Discrete voltage steps for vertical scale
 const VOLTS_DIV_STEPS = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0];
 
-// Discrete timebase steps for horizontal scale
-const TIME_DIV_STEPS = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0];
+// Discrete timebase steps for horizontal scale (extended down to 10µs for high frequency signals)
+const TIME_DIV_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0];
 
 export type BandwidthMode = 'FULL' | '20MHz' | 'LF_CUT' | 'BANDPASS';
 
@@ -32,6 +37,10 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   wires,
   pinStates,
   isRunning,
+  functionGenState,
+  forcedCh1Pin,
+  onCh1PinChange,
+  onOpenFunctionGenerator,
 }) => {
   // Draggable window state
   const [pos, setPos] = useState({ x: 260, y: 65 });
@@ -60,24 +69,24 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   const [ch1Enabled, setCh1Enabled] = useState(true);
   const [ch2Enabled, setCh2Enabled] = useState(true);
 
-  // Feature 4: Vertical scale (Volts per div) with Kam / Jyada controls
+  // Feature 4: Vertical scale (Volts per div) with Kam / Jyada controls (Default centered at 0V)
   const [ch1VoltsDiv, setCh1VoltsDiv] = useState<number>(1.0);
   const [ch2VoltsDiv, setCh2VoltsDiv] = useState<number>(1.0);
-  const [ch1PosDiv, setCh1PosDiv] = useState<number>(1.0);
-  const [ch2PosDiv, setCh2PosDiv] = useState<number>(-1.5);
+  const [ch1PosDiv, setCh1PosDiv] = useState<number>(0.0);
+  const [ch2PosDiv, setCh2PosDiv] = useState<number>(0.0);
 
   // Feature 1: Horizontal Signal Trigger & Timebase adjustments
-  const [timeDiv, setTimeDiv] = useState<number>(2.0); // ms per division
+  const [timeDiv, setTimeDiv] = useState<number>(0.5); // ms per division (0.5ms gives 5 cycles for 1kHz)
   const [hPosDiv, setHPosDiv] = useState<number>(0.0); // divisions from center
   const [triggerSource, setTriggerSource] = useState<'CH1' | 'CH2'>('CH1');
-  const [triggerLevel, setTriggerLevel] = useState<number>(1.65); // Volts
+  const [triggerLevel, setTriggerLevel] = useState<number>(0.0); // Volts (center trigger)
   const [triggerEdge, setTriggerEdge] = useState<'RISING' | 'FALLING'>('RISING');
   const [triggerMode, setTriggerMode] = useState<'AUTO' | 'NORM' | 'SINGLE'>('AUTO');
   const [forceTriggerFlash, setForceTriggerFlash] = useState(false);
 
-  // Feature 2: Time delay variable with Peak-to-Peak variation
+  // Feature 2: Time delay variable (disabled variation by default for authentic signal fidelity)
   const [timeDelay, setTimeDelay] = useState<number>(0.0); // -5.0ms to +5.0ms
-  const [vppVariationEnabled, setVppVariationEnabled] = useState<boolean>(true);
+  const [vppVariationEnabled, setVppVariationEnabled] = useState<boolean>(false);
   const [vppVariationDepth, setVppVariationDepth] = useState<number>(0.35); // depth of Vpp variation
 
   // Feature 3: Bandwidth limit (Higher & Lower Signal Bandwidth Limit)
@@ -86,6 +95,35 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
 
   // Freeze / Pause simulation
   const [isFrozen, setIsFrozen] = useState(false);
+
+  // Synchronize with external probe connection triggers
+  useEffect(() => {
+    if (forcedCh1Pin !== undefined && forcedCh1Pin !== null) {
+      setCh1Pin(forcedCh1Pin);
+      if (forcedCh1Pin.compId === '__func_gen__' || forcedCh1Pin.compId === '__function_generator__') {
+        const f = functionGenState?.frequency || 1000;
+        const a = functionGenState?.amplitude || 5.0;
+        const periodMs = 1000 / f;
+        const targetTimeDiv = Math.max(0.01, (periodMs * 3.5) / 10);
+        const bestTimeDiv = TIME_DIV_STEPS.reduce((prev, curr) =>
+          Math.abs(curr - targetTimeDiv) < Math.abs(prev - targetTimeDiv) ? curr : prev
+        );
+        setTimeDiv(bestTimeDiv);
+        const targetVoltsDiv = Math.max(0.1, a / 4.5);
+        const bestVoltsDiv = VOLTS_DIV_STEPS.reduce((prev, curr) =>
+          Math.abs(curr - targetVoltsDiv) < Math.abs(prev - targetVoltsDiv) ? curr : prev
+        );
+        setCh1VoltsDiv(bestVoltsDiv);
+        setCh1PosDiv(0.0);
+        setTriggerLevel(0.0);
+      }
+    }
+  }, [forcedCh1Pin, functionGenState]);
+
+  const handleSetCh1Pin = (pin: { compId: string; pinId: string } | null) => {
+    setCh1Pin(pin);
+    onCh1PinChange?.(pin);
+  };
 
   // Show probe selection drawer & active control tab
   const [showProbeDrawer, setShowProbeDrawer] = useState(false);
@@ -197,32 +235,40 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
     const loop = (time: number) => {
       const dt = (time - lastTime) / 1000;
       lastTime = time;
-      if (isRunning) {
-        setAnimTime((t) => t + dt);
-      }
+      setAnimTime((t) => t + dt);
       frameId = requestAnimationFrame(loop);
     };
 
     frameId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frameId);
-  }, [isOpen, isRunning, isFrozen]);
+  }, [isOpen, isFrozen]);
 
   // Auto-Set calibration
   const handleAutoSet = () => {
-    const ch1Key = ch1Pin ? `${ch1Pin.compId}:${ch1Pin.pinId}` : '';
-    const v1 = (ch1Key && pinStates && pinStates[ch1Key]?.voltage !== undefined) ? pinStates[ch1Key].voltage : 3.3;
-    if (v1 > 3) {
-      setCh1VoltsDiv(1.0);
-      setTriggerLevel(1.65);
-    } else {
-      setCh1VoltsDiv(0.5);
-      setTriggerLevel(1.0);
+    const isFg = isCh1DirectFg || isCh1CanvasFg;
+    const targetFreq = isFg ? (functionGenState?.frequency || ch1FrequencyNum) : (ch1FrequencyNum > 0 ? ch1FrequencyNum : 1000);
+    const targetVpp = isFg ? (functionGenState?.amplitude || 5.0) : (ch1RawVoltage > 0 ? ch1RawVoltage * 2 : 3.3);
+
+    if (targetFreq > 0) {
+      const periodMs = 1000 / targetFreq;
+      const targetTimeDiv = Math.max(0.01, (periodMs * 3.5) / 10);
+      const bestTimeDiv = TIME_DIV_STEPS.reduce((prev, curr) =>
+        Math.abs(curr - targetTimeDiv) < Math.abs(prev - targetTimeDiv) ? curr : prev
+      );
+      setTimeDiv(bestTimeDiv);
     }
-    setTimeDiv(2.0);
+    if (targetVpp > 0) {
+      const targetVoltsDiv = Math.max(0.1, targetVpp / 4.5);
+      const bestVoltsDiv = VOLTS_DIV_STEPS.reduce((prev, curr) =>
+        Math.abs(curr - targetVoltsDiv) < Math.abs(prev - targetVoltsDiv) ? curr : prev
+      );
+      setCh1VoltsDiv(bestVoltsDiv);
+    }
     setHPosDiv(0);
     setTimeDelay(0);
-    setCh1PosDiv(1.0);
-    setCh2PosDiv(-1.5);
+    setCh1PosDiv(0);
+    setCh2PosDiv(0);
+    setTriggerLevel(0);
     setBandwidthMode('FULL');
   };
 
@@ -281,16 +327,75 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   };
 
   // Signal calculations for CH1
+  const isCh1DirectFg = ch1Pin?.compId === '__func_gen__' || ch1Pin?.compId === '__function_generator__';
+  const canvasFgComp = components.find((c) => c.type === 'function-generator');
+  const isCh1CanvasFg = Boolean(canvasFgComp && ch1Pin?.compId === canvasFgComp.id && ch1Pin?.pinId === 'OUT');
+
   const ch1Key = ch1Pin ? `${ch1Pin.compId}:${ch1Pin.pinId}` : '';
   const ch1State = (ch1Key && pinStates) ? pinStates[ch1Key] : null;
-  const ch1RawVoltage = ch1State?.voltage ?? 0;
-  const ch1Pwm = ch1State?.pwmDuty ?? 0;
+  let ch1RawVoltage = ch1State?.voltage ?? 0;
+  let ch1Pwm = ch1State?.pwmDuty ?? 0;
+  let ch1IsAc = Boolean(ch1State?.isAc);
+  let ch1Waveform: WaveformType = (ch1State?.waveform as WaveformType) || 'sine';
+  let ch1FrequencyNum = ch1State?.frequency || 1000;
+  let ch1OffsetVal = ch1State?.offset ?? 0;
+  let ch1DutyVal = ch1State?.duty ?? 50;
+
+  if (ch1State?.amplitude !== undefined) {
+    ch1RawVoltage = ch1State.amplitude / 2;
+  }
+
+  if (isCh1DirectFg || isCh1CanvasFg) {
+    ch1IsAc = true;
+    if (functionGenState) {
+      ch1Waveform = functionGenState.waveform;
+      ch1FrequencyNum = functionGenState.frequency;
+      ch1OffsetVal = functionGenState.offset;
+      ch1DutyVal = functionGenState.duty;
+      ch1RawVoltage = functionGenState.isOn ? (functionGenState.amplitude / 2) : 0;
+    } else if (canvasFgComp) {
+      ch1Waveform = (canvasFgComp.properties?.waveform as WaveformType) || 'sine';
+      ch1FrequencyNum = Number(canvasFgComp.properties?.frequency) || 1000;
+      ch1OffsetVal = Number(canvasFgComp.properties?.offset) || 0;
+      ch1DutyVal = Number(canvasFgComp.properties?.duty) || 50;
+      ch1RawVoltage = canvasFgComp.properties?.isOn !== false ? (Number(canvasFgComp.properties?.amplitude) || 5.0) / 2 : 0;
+    }
+  }
 
   // Signal calculations for CH2
+  const isCh2DirectFg = ch2Pin?.compId === '__func_gen__' || ch2Pin?.compId === '__function_generator__';
+  const isCh2CanvasFg = Boolean(canvasFgComp && ch2Pin?.compId === canvasFgComp.id && ch2Pin?.pinId === 'OUT');
+
   const ch2Key = ch2Pin ? `${ch2Pin.compId}:${ch2Pin.pinId}` : '';
   const ch2State = (ch2Key && pinStates) ? pinStates[ch2Key] : null;
-  const ch2RawVoltage = ch2State?.voltage ?? 0;
-  const ch2Pwm = ch2State?.pwmDuty ?? 0;
+  let ch2RawVoltage = ch2State?.voltage ?? 0;
+  let ch2Pwm = ch2State?.pwmDuty ?? 0;
+  let ch2IsAc = Boolean(ch2State?.isAc);
+  let ch2Waveform: WaveformType = (ch2State?.waveform as WaveformType) || 'sine';
+  let ch2FrequencyNum = ch2State?.frequency || 1000;
+  let ch2OffsetVal = ch2State?.offset ?? 0;
+  let ch2DutyVal = ch2State?.duty ?? 50;
+
+  if (ch2State?.amplitude !== undefined) {
+    ch2RawVoltage = ch2State.amplitude / 2;
+  }
+
+  if (isCh2DirectFg || isCh2CanvasFg) {
+    ch2IsAc = true;
+    if (functionGenState) {
+      ch2Waveform = functionGenState.waveform;
+      ch2FrequencyNum = functionGenState.frequency;
+      ch2OffsetVal = functionGenState.offset;
+      ch2DutyVal = functionGenState.duty;
+      ch2RawVoltage = functionGenState.isOn ? (functionGenState.amplitude / 2) : 0;
+    } else if (canvasFgComp) {
+      ch2Waveform = (canvasFgComp.properties?.waveform as WaveformType) || 'sine';
+      ch2FrequencyNum = Number(canvasFgComp.properties?.frequency) || 1000;
+      ch2OffsetVal = Number(canvasFgComp.properties?.offset) || 0;
+      ch2DutyVal = Number(canvasFgComp.properties?.duty) || 50;
+      ch2RawVoltage = canvasFgComp.properties?.isOn !== false ? (Number(canvasFgComp.properties?.amplitude) || 5.0) / 2 : 0;
+    }
+  }
 
   // Feature 2: Peak-to-Peak variation multiplier based on Time Delay variable
   // As time delay varies, phase propagation and transmission dispersion modifies the Vpp peak-to-peak amplitude
@@ -305,124 +410,37 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   const { pointsCh1, ch1VmaxVal, ch1VppVal } = useMemo(() => {
     if (!ch1Enabled) return { pointsCh1: '', ch1VmaxVal: 0, ch1VppVal: 0 };
     const pts: string[] = [];
-    const numSamples = 140;
+    const numSamples = 160;
     const dutyRatio = ch1Pwm > 0 ? ch1Pwm / 255 : ch1RawVoltage > 1 ? 1 : 0;
 
-    // Period in pixels scales accurately with timeDiv (2ms reference)
-    const periodPx = divX * (2.0 / (timeDiv / 2.0));
-    const delayPx = (timeDelay / timeDiv) * divX;
+    // Period in pixels scales accurately with physical frequency and oscilloscope timebase timeDiv
+    const f1 = ch1FrequencyNum > 0 ? ch1FrequencyNum : 1000;
+    const periodMs = 1000 / f1;
+    const calcPeriodPx = (periodMs / Math.max(0.001, timeDiv)) * divX;
+    const periodPx = Math.max(8, Math.min(screenWidth * 3.5, calcPeriodPx));
+
+    const delayPx = (timeDelay / Math.max(0.001, timeDiv)) * divX;
     const hPosPx = hPosDiv * divX;
+    const triggerPhase = triggerEdge === 'FALLING' ? 0.5 : 0.0;
 
     let maxV = -999;
     let minV = 999;
 
+    const isCh1Active = isRunning || isCh1DirectFg || isCh1CanvasFg || ch1IsAc || ch1RawVoltage > 0 || ch1Pwm > 0;
+
     for (let i = 0; i <= numSamples; i++) {
       const x = (i / numSamples) * screenWidth;
       let instantaneousV = 0;
 
-      if (isRunning) {
-        // Calculate phase with animation, horizontal position trigger shift, and time delay variable
-        const effectiveX = x + hPosPx + delayPx + animTime * (periodPx * 2.5);
-        const normPhase = ((effectiveX % periodPx) + periodPx) % periodPx / periodPx;
+      if (isCh1Active) {
+        // Precise phase synchronized to trigger with horizontal position and time delay offset
+        const effectiveX = x + hPosPx + delayPx;
+        const normPhase = (((effectiveX / periodPx) - triggerPhase) % 1 + 1) % 1;
 
         if (ch1Pwm > 0) {
-          // PWM Square Wave Base Amplitude scaled by Vpp variation factor
+          // PWM Square Wave Base Amplitude
           const baseVpp = 3.3 * vppMultiplier;
           
-          // Feature 3: Apply Bandwidth Limiting
-          if (bandwidthMode === '20MHz' || bandwidthMode === 'BANDPASS') {
-            // Higher Signal Bandwidth Limit (Low-Pass Filter):
-            // Smooths sharp square transitions and removes high frequency harmonics
-            const edgeWidth = 0.12; // 12% rise/fall time for 20MHz cutoff
-            if (normPhase < edgeWidth) {
-              instantaneousV = baseVpp * (normPhase / edgeWidth);
-            } else if (normPhase < dutyRatio) {
-              instantaneousV = baseVpp;
-            } else if (normPhase < dutyRatio + edgeWidth) {
-              instantaneousV = baseVpp * (1 - (normPhase - dutyRatio) / edgeWidth);
-            } else {
-              instantaneousV = 0;
-            }
-          } else {
-            // Full Bandwidth: Sharp square edges
-            instantaneousV = normPhase < dutyRatio ? baseVpp : 0;
-          }
-
-          // Feature 3: Lower Signal Bandwidth Limit (High-Pass / AC Coupling)
-          if (bandwidthMode === 'LF_CUT' || bandwidthMode === 'BANDPASS') {
-            // Strips DC offset, centers around 0V
-            const meanDC = baseVpp * dutyRatio;
-            instantaneousV -= meanDC;
-          }
-
-        } else if (ch1RawVoltage > 0) {
-          // DC with slight ripple scaled by Vpp multiplier
-          let baseV = ch1RawVoltage * (vppVariationEnabled ? (1.0 + Math.sin(timeDelay * 2) * 0.15) : 1.0);
-          
-          if (bandwidthMode === 'LF_CUT' || bandwidthMode === 'BANDPASS') {
-            // DC component is completely blocked by lower bandwidth limit / AC coupling!
-            baseV = 0;
-          }
-
-          // Ripple higher frequency noise
-          let ripple = Math.sin((effectiveX / periodPx) * Math.PI * 4) * 0.05 * vppMultiplier;
-          if (bandwidthMode === '20MHz' || bandwidthMode === 'BANDPASS') {
-            // Higher frequency ripple eliminated by 20MHz low-pass limit
-            ripple = 0;
-          }
-
-          instantaneousV = baseV + ripple;
-        } else {
-          // Baseline noise
-          let noise = (Math.sin(x * 0.4 + animTime * 20) + Math.cos(x * 0.7)) * 0.02 * vppMultiplier;
-          if (bandwidthMode === '20MHz' || bandwidthMode === 'BANDPASS') {
-            noise *= 0.15; // attenuated by bandwidth limit
-          }
-          instantaneousV = noise;
-        }
-      } else {
-        instantaneousV = (bandwidthMode === 'LF_CUT' || bandwidthMode === 'BANDPASS') ? 0 : ch1RawVoltage;
-      }
-
-      if (instantaneousV > maxV) maxV = instantaneousV;
-      if (instantaneousV < minV) minV = instantaneousV;
-
-      // Screen Y calculation using dynamic divY and ch1VoltsDiv
-      const y = centerY - (instantaneousV / ch1VoltsDiv) * divY - ch1PosDiv * divY;
-      const clampedY = Math.max(2, Math.min(screenHeight - 2, y));
-      pts.push(`${x.toFixed(1)},${clampedY.toFixed(1)}`);
-    }
-
-    const calcVpp = maxV > -900 && minV < 900 ? Math.max(0, maxV - minV) : 0;
-    const calcVmax = maxV > -900 ? maxV : 0;
-
-    return { pointsCh1: pts.join(' '), ch1VmaxVal: calcVmax, ch1VppVal: calcVpp };
-  }, [
-    ch1Enabled, ch1RawVoltage, ch1Pwm, ch1VoltsDiv, ch1PosDiv, 
-    timeDiv, hPosDiv, timeDelay, vppMultiplier, vppVariationEnabled,
-    bandwidthMode, isRunning, animTime, divX, divY, centerY, screenHeight
-  ]);
-
-  // Generate SVG Points for CH2
-  const pointsCh2 = useMemo(() => {
-    if (!ch2Enabled) return '';
-    const pts: string[] = [];
-    const numSamples = 140;
-    const dutyRatio = ch2Pwm > 0 ? ch2Pwm / 255 : ch2RawVoltage > 1 ? 1 : 0;
-    const periodPx = divX * (2.5 / (timeDiv / 2.0));
-    const delayPx = (timeDelay / timeDiv) * divX;
-    const hPosPx = hPosDiv * divX;
-
-    for (let i = 0; i <= numSamples; i++) {
-      const x = (i / numSamples) * screenWidth;
-      let instantaneousV = 0;
-
-      if (isRunning) {
-        const effectiveX = x + hPosPx + delayPx * 0.75 + animTime * (periodPx * 2.2);
-        const normPhase = ((effectiveX % periodPx) + periodPx) % periodPx / periodPx;
-
-        if (ch2Pwm > 0) {
-          const baseVpp = 3.3 * (vppVariationEnabled ? (1.0 + Math.sin(timeDelay * 1.8) * (vppVariationDepth * 0.8)) : 1.0);
           if (bandwidthMode === '20MHz' || bandwidthMode === 'BANDPASS') {
             const edgeWidth = 0.12;
             if (normPhase < edgeWidth) {
@@ -441,6 +459,144 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
           if (bandwidthMode === 'LF_CUT' || bandwidthMode === 'BANDPASS') {
             instantaneousV -= baseVpp * dutyRatio;
           }
+        } else if (ch1IsAc && ch1RawVoltage > 0) {
+          // Authentic AC Waveform (Sine, Square, Triangle, Sawtooth) matching Function Generator
+          const vPeak = ch1RawVoltage * vppMultiplier;
+          let waveInstant = 0;
+          if (ch1Waveform === 'sine') {
+            waveInstant = vPeak * Math.sin(normPhase * 2 * Math.PI);
+          } else if (ch1Waveform === 'square') {
+            const dutyNorm = (ch1DutyVal || 50) / 100;
+            waveInstant = normPhase < dutyNorm ? vPeak : -vPeak;
+          } else if (ch1Waveform === 'triangle') {
+            waveInstant = normPhase < 0.5 ? (4 * normPhase - 1) * vPeak : (3 - 4 * normPhase) * vPeak;
+          } else if (ch1Waveform === 'sawtooth') {
+            waveInstant = (2 * normPhase - 1) * vPeak;
+          } else {
+            waveInstant = vPeak * Math.sin(normPhase * 2 * Math.PI);
+          }
+
+          // Add DC Offset
+          waveInstant += ch1OffsetVal;
+
+          if (bandwidthMode === '20MHz' || bandwidthMode === 'BANDPASS') {
+            if (ch1Waveform === 'square' || ch1Waveform === 'sawtooth') {
+              waveInstant *= 0.95;
+            }
+          }
+          if (bandwidthMode === 'LF_CUT' || bandwidthMode === 'BANDPASS') {
+            waveInstant -= ch1OffsetVal;
+          }
+          instantaneousV = waveInstant;
+        } else if (ch1RawVoltage > 0) {
+          let baseV = ch1RawVoltage;
+          if (bandwidthMode === 'LF_CUT' || bandwidthMode === 'BANDPASS') {
+            baseV = 0;
+          }
+          let ripple = Math.sin((effectiveX / periodPx) * Math.PI * 4) * 0.05 * vppMultiplier;
+          if (bandwidthMode === '20MHz' || bandwidthMode === 'BANDPASS') {
+            ripple = 0;
+          }
+          instantaneousV = baseV + ripple;
+        } else {
+          instantaneousV = 0;
+        }
+      } else {
+        instantaneousV = 0;
+      }
+
+      if (instantaneousV > maxV) maxV = instantaneousV;
+      if (instantaneousV < minV) minV = instantaneousV;
+
+      // Screen Y calculation using dynamic divY and ch1VoltsDiv
+      const y = centerY - (instantaneousV / ch1VoltsDiv) * divY - ch1PosDiv * divY;
+      const clampedY = Math.max(2, Math.min(screenHeight - 2, y));
+      pts.push(`${x.toFixed(1)},${clampedY.toFixed(1)}`);
+    }
+
+    const calcVpp = maxV > -900 && minV < 900 ? Math.max(0, maxV - minV) : 0;
+    const calcVmax = maxV > -900 ? maxV : 0;
+
+    return { pointsCh1: pts.join(' '), ch1VmaxVal: calcVmax, ch1VppVal: calcVpp };
+  }, [
+    ch1Enabled, ch1RawVoltage, ch1Pwm, ch1IsAc, ch1Waveform, ch1FrequencyNum, ch1OffsetVal, ch1DutyVal,
+    ch1VoltsDiv, ch1PosDiv, timeDiv, hPosDiv, timeDelay, vppMultiplier, vppVariationEnabled,
+    bandwidthMode, isRunning, isCh1DirectFg, isCh1CanvasFg, divX, divY, centerY, screenHeight, triggerEdge
+  ]);
+
+  // Generate SVG Points for CH2
+  const pointsCh2 = useMemo(() => {
+    if (!ch2Enabled) return '';
+    const pts: string[] = [];
+    const numSamples = 160;
+    const dutyRatio = ch2Pwm > 0 ? ch2Pwm / 255 : ch2RawVoltage > 1 ? 1 : 0;
+
+    const f2 = ch2FrequencyNum > 0 ? ch2FrequencyNum : 1000;
+    const periodMs2 = 1000 / f2;
+    const calcPeriodPx2 = (periodMs2 / Math.max(0.001, timeDiv)) * divX;
+    const periodPx = Math.max(8, Math.min(screenWidth * 3.5, calcPeriodPx2));
+
+    const delayPx = (timeDelay / Math.max(0.001, timeDiv)) * divX;
+    const hPosPx = hPosDiv * divX;
+    const triggerPhase = triggerEdge === 'FALLING' ? 0.5 : 0.0;
+
+    const isCh2Active = isRunning || isCh2DirectFg || isCh2CanvasFg || ch2IsAc || ch2RawVoltage > 0 || ch2Pwm > 0;
+
+    for (let i = 0; i <= numSamples; i++) {
+      const x = (i / numSamples) * screenWidth;
+      let instantaneousV = 0;
+
+      if (isCh2Active) {
+        const effectiveX = x + hPosPx + delayPx;
+        const normPhase = (((effectiveX / periodPx) - triggerPhase) % 1 + 1) % 1;
+
+        if (ch2Pwm > 0) {
+          const baseVpp = 3.3 * vppMultiplier;
+          if (bandwidthMode === '20MHz' || bandwidthMode === 'BANDPASS') {
+            const edgeWidth = 0.12;
+            if (normPhase < edgeWidth) {
+              instantaneousV = baseVpp * (normPhase / edgeWidth);
+            } else if (normPhase < dutyRatio) {
+              instantaneousV = baseVpp;
+            } else if (normPhase < dutyRatio + edgeWidth) {
+              instantaneousV = baseVpp * (1 - (normPhase - dutyRatio) / edgeWidth);
+            } else {
+              instantaneousV = 0;
+            }
+          } else {
+            instantaneousV = normPhase < dutyRatio ? baseVpp : 0;
+          }
+
+          if (bandwidthMode === 'LF_CUT' || bandwidthMode === 'BANDPASS') {
+            instantaneousV -= baseVpp * dutyRatio;
+          }
+        } else if (ch2IsAc && ch2RawVoltage > 0) {
+          const vPeak = ch2RawVoltage * vppMultiplier;
+          let waveInstant = 0;
+          if (ch2Waveform === 'sine') {
+            waveInstant = vPeak * Math.sin(normPhase * 2 * Math.PI);
+          } else if (ch2Waveform === 'square') {
+            const dutyNorm = (ch2DutyVal || 50) / 100;
+            waveInstant = normPhase < dutyNorm ? vPeak : -vPeak;
+          } else if (ch2Waveform === 'triangle') {
+            waveInstant = normPhase < 0.5 ? (4 * normPhase - 1) * vPeak : (3 - 4 * normPhase) * vPeak;
+          } else if (ch2Waveform === 'sawtooth') {
+            waveInstant = (2 * normPhase - 1) * vPeak;
+          } else {
+            waveInstant = vPeak * Math.sin(normPhase * 2 * Math.PI);
+          }
+
+          waveInstant += ch2OffsetVal;
+
+          if (bandwidthMode === '20MHz' || bandwidthMode === 'BANDPASS') {
+            if (ch2Waveform === 'square' || ch2Waveform === 'sawtooth') {
+              waveInstant *= 0.95;
+            }
+          }
+          if (bandwidthMode === 'LF_CUT' || bandwidthMode === 'BANDPASS') {
+            waveInstant -= ch2OffsetVal;
+          }
+          instantaneousV = waveInstant;
         } else if (ch2RawVoltage > 0) {
           let baseV = ch2RawVoltage;
           if (bandwidthMode === 'LF_CUT' || bandwidthMode === 'BANDPASS') {
@@ -452,10 +608,10 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
           }
           instantaneousV = baseV + ripple;
         } else {
-          instantaneousV = Math.sin(x * 0.3 + animTime * 15) * 0.02;
+          instantaneousV = 0;
         }
       } else {
-        instantaneousV = (bandwidthMode === 'LF_CUT' || bandwidthMode === 'BANDPASS') ? 0 : ch2RawVoltage;
+        instantaneousV = 0;
       }
 
       const y = centerY - (instantaneousV / ch2VoltsDiv) * divY - ch2PosDiv * divY;
@@ -465,9 +621,9 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
 
     return pts.join(' ');
   }, [
-    ch2Enabled, ch2RawVoltage, ch2Pwm, ch2VoltsDiv, ch2PosDiv,
-    timeDiv, hPosDiv, timeDelay, vppVariationEnabled, vppVariationDepth,
-    bandwidthMode, isRunning, animTime, divX, divY, centerY, screenHeight
+    ch2Enabled, ch2RawVoltage, ch2Pwm, ch2IsAc, ch2Waveform, ch2FrequencyNum, ch2OffsetVal, ch2DutyVal,
+    ch2VoltsDiv, ch2PosDiv, timeDiv, hPosDiv, timeDelay, vppMultiplier, vppVariationEnabled,
+    bandwidthMode, isRunning, isCh2DirectFg, isCh2CanvasFg, divX, divY, centerY, screenHeight, triggerEdge
   ]);
 
   // Trigger Level line in screen coordinates
@@ -476,11 +632,25 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   const triggerY = centerY - (triggerLevel / activeVoltsDiv) * divY - activePosDiv * divY;
   const triggerX = screenWidth / 2 + hPosDiv * divX;
 
-  // Measurements readout
-  const ch1Vmax = ch1VmaxVal > 0 ? ch1VmaxVal.toFixed(2) : ch1Pwm > 0 ? (3.3 * vppMultiplier).toFixed(2) : '0.00';
-  const ch1Vpp = ch1VppVal > 0 ? ch1VppVal.toFixed(2) : ch1Pwm > 0 ? (3.3 * vppMultiplier).toFixed(2) : '0.00';
-  const ch1Freq = ch1Pwm > 0 ? '1.00 kHz' : ch1RawVoltage > 0 ? 'DC' : '0.00 Hz';
-  const ch1Duty = ch1Pwm > 0 ? `${((ch1Pwm / 255) * 100).toFixed(1)}%` : ch1RawVoltage > 1 ? '100%' : '0%';
+  // Accurate measurements readout
+  const isCh1FgSource = isCh1DirectFg || isCh1CanvasFg || ch1State?.amplitude !== undefined;
+  const fgAmp = ch1State?.amplitude ?? (functionGenState?.amplitude ?? 5.0);
+  const fgOff = ch1State?.offset ?? (functionGenState?.offset ?? 0);
+  const ch1Vmax = isCh1FgSource
+    ? ((fgAmp / 2 + Math.max(0, fgOff)) * vppMultiplier).toFixed(2)
+    : ch1VmaxVal > 0 ? ch1VmaxVal.toFixed(2) : ch1Pwm > 0 ? (3.3 * vppMultiplier).toFixed(2) : '0.00';
+
+  const ch1Vpp = isCh1FgSource
+    ? (fgAmp * vppMultiplier).toFixed(2)
+    : ch1VppVal > 0 ? ch1VppVal.toFixed(2) : ch1Pwm > 0 ? (3.3 * vppMultiplier).toFixed(2) : '0.00';
+
+  const ch1Freq = ch1IsAc
+    ? (ch1FrequencyNum >= 1000 ? `${(ch1FrequencyNum / 1000).toFixed(2)} kHz` : `${ch1FrequencyNum} Hz`)
+    : ch1Pwm > 0 ? '1.00 kHz' : ch1RawVoltage > 0 ? 'DC' : '0.00 Hz';
+
+  const ch1Duty = (ch1Waveform === 'square' && (isCh1FgSource || ch1DutyVal !== undefined))
+    ? `${ch1DutyVal}%`
+    : ch1Pwm > 0 ? `${((ch1Pwm / 255) * 100).toFixed(1)}%` : ch1RawVoltage > 1 ? '100%' : '0%';
 
   if (!isOpen) return null;
 
@@ -1383,7 +1553,77 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
 
             {/* Probes Assignment Drawer */}
             {showProbeDrawer && (
-              <div className="mt-2 p-2 bg-slate-900 border border-slate-700 rounded-lg space-y-1.5">
+              <div className="mt-2 p-2 bg-slate-900 border border-slate-700 rounded-lg space-y-2">
+                {/* 1-Click Direct Function Generator Integration */}
+                <div className="p-1.5 rounded-lg bg-emerald-950/40 border border-emerald-600/50 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-emerald-300 font-bold flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      DDS FUNCTION GENERATOR LINK
+                    </span>
+                    {onOpenFunctionGenerator && (
+                      <button
+                        type="button"
+                        onClick={onOpenFunctionGenerator}
+                        className="text-[8px] text-emerald-400 hover:text-emerald-300 underline font-bold cursor-pointer"
+                      >
+                        Open Generator Panel ↗
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (ch1Pin?.compId === '__func_gen__') {
+                          handleSetCh1Pin(null);
+                        } else {
+                          handleSetCh1Pin({ compId: '__func_gen__', pinId: 'OUT' });
+                        }
+                      }}
+                      className={`px-2 py-1 rounded text-[8.5px] font-bold cursor-pointer transition flex items-center gap-1 ${
+                        ch1Pin?.compId === '__func_gen__' || (canvasFgComp && ch1Pin?.compId === canvasFgComp.id && ch1Pin?.pinId === 'OUT')
+                          ? 'bg-emerald-600 text-white shadow-emerald-900/60 ring-1 ring-emerald-400'
+                          : 'bg-slate-800 hover:bg-slate-700 border border-emerald-600/60 text-emerald-300'
+                      }`}
+                    >
+                      <Activity className="w-2.5 h-2.5" />
+                      {ch1Pin?.compId === '__func_gen__' || (canvasFgComp && ch1Pin?.compId === canvasFgComp.id && ch1Pin?.pinId === 'OUT')
+                        ? '✓ CH1 Connected to Func Gen'
+                        : '~ Connect CH1 to Func Gen'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (ch2Pin?.compId === '__func_gen__') {
+                          setCh2Pin(null);
+                        } else {
+                          setCh2Pin({ compId: '__func_gen__', pinId: 'OUT' });
+                        }
+                      }}
+                      className={`px-2 py-1 rounded text-[8.5px] font-bold cursor-pointer transition flex items-center gap-1 ${
+                        ch2Pin?.compId === '__func_gen__' || (canvasFgComp && ch2Pin?.compId === canvasFgComp.id && ch2Pin?.pinId === 'OUT')
+                          ? 'bg-cyan-600 text-white shadow-cyan-900/60 ring-1 ring-cyan-400'
+                          : 'bg-slate-800 hover:bg-slate-700 border border-cyan-600/60 text-cyan-300'
+                      }`}
+                    >
+                      <Activity className="w-2.5 h-2.5" />
+                      {ch2Pin?.compId === '__func_gen__' || (canvasFgComp && ch2Pin?.compId === canvasFgComp.id && ch2Pin?.pinId === 'OUT')
+                        ? '✓ CH2 Connected to Func Gen'
+                        : '~ Connect CH2 to Func Gen'}
+                    </button>
+                  </div>
+
+                  {(ch1Pin?.compId === '__func_gen__' || ch2Pin?.compId === '__func_gen__') && (
+                    <div className="text-[8px] font-mono text-emerald-300/90 pt-0.5">
+                      Signal: {functionGenState?.waveform.toUpperCase() || 'SINE'} • {functionGenState?.frequency || 1000}Hz • {functionGenState?.amplitude || 5.0}Vpp {functionGenState?.isOn === false ? '(OUTPUT MUTED)' : ''}
+                    </div>
+                  )}
+                </div>
+
+                {/* CH1 Pin Selector */}
                 <div>
                   <label className="text-[10px] font-mono text-yellow-400 font-bold block mb-0.5">
                     CH1 PROBE LEAD:
@@ -1391,20 +1631,31 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
                   <select
                     value={ch1Pin ? `${ch1Pin.compId}:${ch1Pin.pinId}` : ''}
                     onChange={(e) => {
+                      if (!e.target.value) {
+                        handleSetCh1Pin(null);
+                        return;
+                      }
                       const [compId, pinId] = e.target.value.split(':');
-                      if (compId && pinId) setCh1Pin({ compId, pinId });
+                      if (compId && pinId) handleSetCh1Pin({ compId, pinId });
                     }}
                     className="w-full bg-slate-950 border border-slate-700 rounded p-1 text-[10px] text-slate-200 focus:outline-none focus:border-yellow-500"
                   >
-                    <option value="">-- Choose Pin --</option>
-                    {allPins.map((p) => (
-                      <option key={`${p.compId}:${p.pinId}`} value={`${p.compId}:${p.pinId}`}>
-                        {p.label}
-                      </option>
-                    ))}
+                    <option value="">-- Disconnected / Choose Pin --</option>
+                    <optgroup label="⚡ Laboratory Function Generator">
+                      <option value="__func_gen__:OUT">⚡ [FUNC GEN] DDS Signal Output (OUT)</option>
+                      <option value="__func_gen__:GND">⚡ [FUNC GEN] Ground Reference (GND)</option>
+                    </optgroup>
+                    <optgroup label="🔌 Circuit Components">
+                      {allPins.map((p) => (
+                        <option key={`${p.compId}:${p.pinId}`} value={`${p.compId}:${p.pinId}`}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </optgroup>
                   </select>
                 </div>
 
+                {/* CH2 Pin Selector */}
                 <div>
                   <label className="text-[10px] font-mono text-cyan-400 font-bold block mb-0.5">
                     CH2 PROBE LEAD:
@@ -1412,17 +1663,27 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
                   <select
                     value={ch2Pin ? `${ch2Pin.compId}:${ch2Pin.pinId}` : ''}
                     onChange={(e) => {
+                      if (!e.target.value) {
+                        setCh2Pin(null);
+                        return;
+                      }
                       const [compId, pinId] = e.target.value.split(':');
                       if (compId && pinId) setCh2Pin({ compId, pinId });
                     }}
                     className="w-full bg-slate-950 border border-slate-700 rounded p-1 text-[10px] text-slate-200 focus:outline-none focus:border-cyan-500"
                   >
-                    <option value="">-- Choose Pin --</option>
-                    {allPins.map((p) => (
-                      <option key={`${p.compId}:${p.pinId}`} value={`${p.compId}:${p.pinId}`}>
-                        {p.label}
-                      </option>
-                    ))}
+                    <option value="">-- Disconnected / Choose Pin --</option>
+                    <optgroup label="⚡ Laboratory Function Generator">
+                      <option value="__func_gen__:OUT">⚡ [FUNC GEN] DDS Signal Output (OUT)</option>
+                      <option value="__func_gen__:GND">⚡ [FUNC GEN] Ground Reference (GND)</option>
+                    </optgroup>
+                    <optgroup label="🔌 Circuit Components">
+                      {allPins.map((p) => (
+                        <option key={`${p.compId}:${p.pinId}`} value={`${p.compId}:${p.pinId}`}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </optgroup>
                   </select>
                 </div>
               </div>

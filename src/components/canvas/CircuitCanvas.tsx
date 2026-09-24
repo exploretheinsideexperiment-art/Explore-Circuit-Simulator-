@@ -2,10 +2,10 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { 
   CircuitComponent, Wire, ViewMode, PinDef, SignalLevel 
 } from '../../types';
-import { COMPONENT_CATALOG } from '../../engine/peripherals/definitions';
+import { COMPONENT_CATALOG, getComponentPins, getComponentDimensions } from '../../engine/peripherals/definitions';
 import { soundEngine } from '../../engine/audio';
 import { SUPPORTED_BOARDS } from '../../engine/mcu/boards';
-import { ZoomIn, ZoomOut, Maximize2, Grid, Trash2, Plus, FolderOpen, Cpu, X, Cable } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, Grid, Trash2, Plus, FolderOpen, Cpu, X, Cable, RotateCw, Play, Pause, Square } from 'lucide-react';
 import { MeasurementMenu } from '../instruments/MeasurementMenu';
 import { PowerSupplyMenu } from '../instruments/PowerSupplyMenu';
 import { RealMcuBoard } from './components/RealMcuBoards';
@@ -43,9 +43,11 @@ import {
   RealPowerSupply, 
   RealAdjustableDcSupply,
   RealAdjustableAcSupply,
+  RealFunctionGenerator,
   RealGroundNode, 
   RealLogicGateIC 
 } from './components/RealPowerAndICs';
+import { RealDipIc } from './components/RealDipIc';
 import {
   RealTo92Transistor,
   RealTo220PowerPackage,
@@ -82,6 +84,8 @@ interface CircuitCanvasProps {
   onToggleMultimeter: () => void;
   isOscilloscopeOpen: boolean;
   onToggleOscilloscope: () => void;
+  isFunctionGeneratorOpen?: boolean;
+  onToggleFunctionGenerator?: () => void;
   onAddDcSupply?: (voltage: number, currentLimit: number) => any;
   onAddAcSupply?: (voltage: number, frequency: number, waveform: 'sine' | 'square' | 'triangle') => any;
   onOpenBenchSupply?: () => void;
@@ -89,6 +93,17 @@ interface CircuitCanvasProps {
   externalWireStart?: { compId: string; pinId: string; color?: string } | null;
   onClearExternalWireStart?: () => void;
   onWireStartChange?: (wireInfo: { compId: string; pinId: string } | null) => void;
+  zoom?: number;
+  pan?: { x: number; y: number };
+  showGrid?: boolean;
+  theme?: 'dark' | 'light';
+  onZoomChange?: (newZoom: number) => void;
+  onPanChange?: (newPan: { x: number; y: number }) => void;
+  onRotateComponent?: (id: string) => void;
+  onRun?: () => void;
+  onPause?: () => void;
+  onStop?: () => void;
+  isPaused?: boolean;
 }
 
 export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
@@ -118,6 +133,8 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   onToggleMultimeter,
   isOscilloscopeOpen,
   onToggleOscilloscope,
+  isFunctionGeneratorOpen = false,
+  onToggleFunctionGenerator = () => {},
   onAddDcSupply,
   onAddAcSupply,
   onOpenBenchSupply,
@@ -125,18 +142,44 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   externalWireStart,
   onClearExternalWireStart,
   onWireStartChange,
+  zoom: externalZoom,
+  pan: externalPan,
+  showGrid: externalShowGrid,
+  theme = 'dark',
+  onZoomChange,
+  onPanChange,
+  onRotateComponent,
+  onRun,
+  onPause,
+  onStop,
+  isPaused = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Connection notification toast
   const [connectionToast, setConnectionToast] = useState<string | null>(null);
 
-  // Pan & Zoom state
-  const [zoom, setZoom] = useState(1.0);
-  const [pan, setPan] = useState({ x: 40, y: 40 });
+  // Pan & Zoom state (controlled/uncontrolled sync)
+  const [internalZoom, setInternalZoom] = useState(1.0);
+  const zoom = externalZoom !== undefined ? externalZoom : internalZoom;
+  const setZoom = (valOrFn: number | ((prev: number) => number)) => {
+    const nextVal = typeof valOrFn === 'function' ? valOrFn(zoom) : valOrFn;
+    setInternalZoom(nextVal);
+    onZoomChange?.(nextVal);
+  };
+
+  const [internalPan, setInternalPan] = useState({ x: 40, y: 40 });
+  const pan = externalPan !== undefined ? externalPan : internalPan;
+  const setPan = (valOrFn: { x: number; y: number } | ((prev: { x: number; y: number }) => { x: number; y: number })) => {
+    const nextVal = typeof valOrFn === 'function' ? valOrFn(pan) : valOrFn;
+    setInternalPan(nextVal);
+    onPanChange?.(nextVal);
+  };
+
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-  const [showGrid, setShowGrid] = useState(true);
+  const [internalShowGrid, setInternalShowGrid] = useState(true);
+  const showGrid = externalShowGrid !== undefined ? externalShowGrid : internalShowGrid;
 
   // Component Dragging State
   const [activeDrag, setActiveDrag] = useState<{
@@ -464,21 +507,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
 
-    let compW = 80;
-    let compH = 80;
-    if (comp.type.startsWith('mcu-')) {
-      const b = SUPPORTED_BOARDS[comp.properties?.boardId || 'esp32-devkit-v1'];
-      if (b) {
-        compW = b.width;
-        compH = b.height;
-      }
-    } else {
-      const t = COMPONENT_CATALOG.find((c) => c.type === comp.type);
-      if (t) {
-        compW = t.width;
-        compH = t.height;
-      }
-    }
+    const { width: compW, height: compH } = getComponentDimensions(comp);
 
     const cx = compW / 2;
     const cy = compH / 2;
@@ -497,8 +526,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
   // Helper: Automatically find best matching pin on a target component based on wire polarity
   const getBestTargetPin = useCallback((sourcePinId: string, targetComp: CircuitComponent): string | null => {
-    const template = COMPONENT_CATALOG.find((c) => c.type === targetComp.type);
-    const pins = template?.pins || [];
+    const pins = getComponentPins(targetComp);
     if (pins.length === 0) return null;
 
     const isPositive =
@@ -551,8 +579,8 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   const startWireFromPin = useCallback(
     (compId: string, pinId: string, color?: string) => {
       const comp = components.find((c) => c.id === compId);
-      const template = comp ? COMPONENT_CATALOG.find((c) => c.type === comp.type) : null;
-      const pin = template?.pins.find((p) => p.id === pinId) || {
+      const compPins = comp ? getComponentPins(comp) : [];
+      const pin = compPins.find((p) => p.id === pinId) || {
         id: pinId,
         name: pinId,
         x: pinId === 'VCC' || pinId === 'LIVE' ? 40 : 100,
@@ -871,9 +899,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     if (hoveredPin) {
       const comp = components.find((c) => c.id === hoveredPin.compId);
       if (comp) {
-        const pinDef = comp.type.startsWith('mcu-')
-          ? SUPPORTED_BOARDS[comp.properties?.boardId || 'esp32-devkit-v1']?.pins.find((p) => p.id === hoveredPin.pinId)
-          : COMPONENT_CATALOG.find((c) => c.type === comp.type)?.pins.find((p) => p.id === hoveredPin.pinId);
+        const pinDef = getComponentPins(comp).find((p) => p.id === hoveredPin.pinId);
         if (pinDef) {
           return getPinAbsolutePos(comp, pinDef);
         }
@@ -950,63 +976,122 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className="relative flex-1 w-full h-full bg-[#0a0d14] overflow-hidden select-none outline-none cursor-default"
+      className={`relative flex-1 w-full h-full overflow-hidden select-none outline-none cursor-default transition-colors duration-200 ${
+        theme === 'light' ? 'bg-[#f8fafc]' : 'bg-[#0a0d14]'
+      }`}
       style={{
         backgroundImage: showGrid
-          ? 'radial-gradient(circle, #25334a 1.2px, transparent 1.2px)'
+          ? theme === 'light'
+            ? 'radial-gradient(circle, #94a3b8 1.4px, transparent 1.4px)'
+            : 'radial-gradient(circle, #25334a 1.2px, transparent 1.2px)'
           : 'none',
         backgroundSize: `${24 * zoom}px ${24 * zoom}px`,
         backgroundPosition: `${pan.x}px ${pan.y}px`,
       }}
     >
-      {/* Top Floating Control Bar: Zoom, Grid, Measurement Tools, Delete, 90° Wire, Color */}
-      <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 bg-[#0f1422]/95 backdrop-blur-md border border-slate-800 p-1.5 rounded-xl shadow-2xl flex-wrap max-w-[calc(100vw-30px)]">
+      {/* Bottom Floating Control Bar: Start, Stop, Rotate, Measurement Tools, Power Supply, Delete, Projects */}
+      <div 
+        onWheel={(e) => {
+          e.stopPropagation();
+          e.currentTarget.scrollLeft += (e.deltaY !== 0 ? e.deltaY : e.deltaX);
+        }}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
+        className={`absolute bottom-3 left-3 sm:left-4 z-30 flex items-center gap-1.5 backdrop-blur-md border p-1.5 rounded-xl shadow-2xl overflow-x-auto scrollbar-none max-w-[calc(100vw-24px)] touch-pan-x shrink-0 select-none ${
+          theme === 'light'
+            ? 'bg-white/95 border-slate-300 text-slate-800 shadow-xl'
+            : 'bg-[#0f1422]/95 border-slate-800/90 text-slate-200'
+        }`}
+        style={{
+          WebkitOverflowScrolling: 'touch',
+        }}
+      >
+        {/* Start / Pause Simulation */}
+        {!isRunning ? (
+          <button
+            id="bottom-sim-run-btn"
+            onClick={onRun}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-md shadow-emerald-500/20 transition active:scale-95 cursor-pointer shrink-0 whitespace-nowrap"
+            title="Start Simulation (Real-time)"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span>Start</span>
+          </button>
+        ) : (
+          <button
+            id="bottom-sim-pause-btn"
+            onClick={onPause}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-bold text-xs transition cursor-pointer shrink-0 whitespace-nowrap ${
+              isPaused 
+                ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20' 
+                : theme === 'light'
+                ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
+                : 'bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30'
+            }`}
+            title={isPaused ? "Resume Simulation" : "Pause Simulation"}
+          >
+            {isPaused ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5" />}
+            <span>{isPaused ? 'Resume' : 'Pause'}</span>
+          </button>
+        )}
+
+        {/* Stop Simulation */}
         <button
-          onClick={() => setZoom((z) => Math.min(2.5, z + 0.1))}
-          className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-          title="Zoom In"
-        >
-          <ZoomIn className="w-4 h-4" />
-        </button>
-        <button
-          onClick={() => setZoom((z) => Math.max(0.4, z - 0.1))}
-          className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-          title="Zoom Out"
-        >
-          <ZoomOut className="w-4 h-4" />
-        </button>
-        <button
-          onClick={() => {
-            setZoom(1.0);
-            setPan({ x: 40, y: 40 });
-          }}
-          className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-          title="Reset View"
-        >
-          <Maximize2 className="w-4 h-4" />
-        </button>
-        <div className="h-4 w-px bg-slate-800 mx-0.5" />
-        <button
-          onClick={() => setShowGrid(!showGrid)}
-          className={`p-1.5 rounded-lg transition cursor-pointer ${
-            showGrid ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+          id="bottom-sim-stop-btn"
+          onClick={onStop}
+          disabled={!isRunning}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shrink-0 active:scale-95 whitespace-nowrap ${
+            theme === 'light'
+              ? 'text-rose-600 hover:bg-rose-50 border border-rose-200 disabled:opacity-40 disabled:hover:bg-transparent'
+              : 'text-rose-500 hover:bg-rose-950/40 border border-rose-500/30 disabled:opacity-40 disabled:hover:bg-transparent'
           }`}
-          title="Toggle Grid"
+          title="Stop Simulation"
         >
-          <Grid className="w-4 h-4" />
+          <Square className="w-3.5 h-3.5 fill-current" />
+          <span>Stop</span>
         </button>
 
-        <div className="h-4 w-px bg-slate-800 mx-0.5" />
+        {/* Rotate Selected Component */}
+        <button
+          id="bottom-rotate-comp-btn"
+          onClick={() => {
+            if (selectedCompId && onRotateComponent) {
+              onRotateComponent(selectedCompId);
+              try { soundEngine.playRelayClick(true); } catch (_) {}
+            }
+          }}
+          disabled={!selectedCompId}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer shrink-0 active:scale-95 whitespace-nowrap ${
+            selectedCompId
+              ? theme === 'light'
+                ? 'bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border-cyan-400 shadow-xs'
+                : 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border-cyan-500/50 hover:border-cyan-400 shadow-md shadow-cyan-950/30'
+              : 'bg-slate-900/40 text-slate-500 border-slate-800/80 cursor-not-allowed opacity-50'
+          }`}
+          title={
+            selectedCompId
+              ? `Rotate selected component (${components.find((c) => c.id === selectedCompId)?.name || 'part'}) 90°`
+              : 'Click any component on canvas to select, then click Rotate'
+          }
+        >
+          <RotateCw className="w-3.5 h-3.5 text-cyan-500" />
+          <span>Rotate</span>
+        </button>
 
-        {/* Measurement Tab Button with Popover */}
+        <div className={`h-4 w-px mx-0.5 shrink-0 ${theme === 'light' ? 'bg-slate-300' : 'bg-slate-800'}`} />
+
+        {/* Measurement Tab Button with Popover (Pops upwards) */}
         <MeasurementMenu
           isMultimeterOpen={isMultimeterOpen}
           onToggleMultimeter={onToggleMultimeter}
           isOscilloscopeOpen={isOscilloscopeOpen}
           onToggleOscilloscope={onToggleOscilloscope}
+          isFunctionGeneratorOpen={isFunctionGeneratorOpen}
+          onToggleFunctionGenerator={onToggleFunctionGenerator}
+          dropUp={true}
         />
 
-        {/* AC/DC Supply Button with Adjustment Devices */}
+        {/* AC/DC Supply Button with Adjustment Devices (Pops upwards) */}
         {onAddDcSupply && onAddAcSupply && (
           <PowerSupplyMenu
             onAddDcSupply={onAddDcSupply}
@@ -1022,6 +1107,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
               startWireFromPin(compId, pinId, color);
             }}
             activeWiringPin={wireStart ? { compId: wireStart.compId, pinId: wireStart.pinId } : null}
+            dropUp={true}
           />
         )}
 
@@ -1036,7 +1122,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
             }
           }}
           disabled={!selectedCompId && !selectedWireId}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold shadow-lg transition-all cursor-pointer select-none active:scale-95 ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold shadow-lg transition-all cursor-pointer select-none active:scale-95 whitespace-nowrap shrink-0 ${
             selectedCompId || selectedWireId
               ? 'bg-rose-500/25 hover:bg-rose-600 text-rose-200 hover:text-white border-rose-500/60 ring-2 ring-rose-500/30 shadow-rose-950/40'
               : 'bg-slate-900/40 border-slate-800/80 text-slate-500 cursor-not-allowed opacity-50'
@@ -1060,7 +1146,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           <button
             id="toolbar-projects-folder-btn"
             onClick={onOpenProjectManager}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-bold text-amber-300 hover:text-white bg-slate-900/90 hover:bg-amber-500/25 border border-amber-500/40 hover:border-amber-400 shadow-md transition cursor-pointer ml-1 active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-bold text-amber-300 hover:text-white bg-slate-900/90 hover:bg-amber-500/25 border border-amber-500/40 hover:border-amber-400 shadow-md transition cursor-pointer ml-1 active:scale-95 whitespace-nowrap shrink-0"
             title="Projects (Save current project or Open saved projects)"
           >
             <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
@@ -1090,13 +1176,8 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           const comp2 = components.find((c) => c.id === wire.toCompId);
           if (!comp1 || !comp2) return null;
 
-          const def1 = comp1.type.startsWith('mcu-')
-            ? SUPPORTED_BOARDS[comp1.properties?.boardId || 'esp32-devkit-v1']?.pins.find((p) => p.id === wire.fromPinId)
-            : COMPONENT_CATALOG.find((c) => c.type === comp1.type)?.pins.find((p) => p.id === wire.fromPinId);
-
-          const def2 = comp2.type.startsWith('mcu-')
-            ? SUPPORTED_BOARDS[comp2.properties?.boardId || 'esp32-devkit-v1']?.pins.find((p) => p.id === wire.toPinId)
-            : COMPONENT_CATALOG.find((c) => c.type === comp2.type)?.pins.find((p) => p.id === wire.toPinId);
+          const def1 = getComponentPins(comp1).find((p) => p.id === wire.fromPinId);
+          const def2 = getComponentPins(comp2).find((p) => p.id === wire.toPinId);
 
           if (!def1 || !def2) return null;
 
@@ -1856,6 +1937,11 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
     return <RealAdjustableAcSupply comp={effectiveComp} renderPin={renderPin} onUpdateProperty={onUpdateProperty} />;
   }
 
+  // DDS FUNCTION GENERATOR (Sine, Square, Triangle, Sawtooth)
+  if (comp.type === 'function-generator') {
+    return <RealFunctionGenerator comp={effectiveComp} renderPin={renderPin} onUpdateProperty={onUpdateProperty} />;
+  }
+
   // REGULATED DC POWER MODULE (5V / 3.3V)
   if (comp.type.startsWith('power-supply-')) {
     return <RealPowerSupply comp={effectiveComp} renderPin={renderPin} />;
@@ -1864,6 +1950,18 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
   // COMMON GROUND TERMINAL (GND)
   if (comp.type === 'ground-node') {
     return <RealGroundNode comp={effectiveComp} renderPin={renderPin} />;
+  }
+
+  // INTEGRATED CIRCUITS & DIP PACKAGES (NE555, LM741, LM358, 74xx, CD4017, L293D, Universal IC, etc.)
+  if (comp.type === 'ic-universal' || comp.type.startsWith('ic-')) {
+    return (
+      <RealDipIc
+        comp={effectiveComp}
+        pinStates={pinStates}
+        renderPin={renderPin}
+        onUpdateProperty={onUpdateProperty}
+      />
+    );
   }
 
   // DUAL-IN-LINE (DIP-14) LOGIC GATE ICS (74HC08, 74HC32, 74HC04)

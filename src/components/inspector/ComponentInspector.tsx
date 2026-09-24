@@ -1,11 +1,12 @@
 import React from 'react';
 import { 
   Sliders, Activity, FileText, Trash2, Copy, RotateCw, 
-  Zap, Info, Gauge, Eye, Thermometer, Wind, Compass, X
+  Zap, Info, Gauge, Eye, Thermometer, Wind, Compass, X, Cpu, Layers
 } from 'lucide-react';
 import { CircuitComponent, PinDef, Wire } from '../../types';
-import { COMPONENT_CATALOG } from '../../engine/peripherals/definitions';
+import { COMPONENT_CATALOG, getComponentPins } from '../../engine/peripherals/definitions';
 import { SUPPORTED_BOARDS } from '../../engine/mcu/boards';
+import { findIcDefinition, BUILTIN_IC_LIBRARY, TRANSISTOR_MODELS, DIODE_MODELS } from '../../engine/peripherals/icLibrary';
 
 interface ComponentInspectorProps {
   selectedComponent: CircuitComponent | null;
@@ -100,8 +101,8 @@ export const ComponentInspector: React.FC<ComponentInspectorProps> = ({
     return null;
   }
 
-  // Get component template and pins
-  let pins: PinDef[] = [];
+  // Get dynamic component pins and description
+  let pins: PinDef[] = getComponentPins(selectedComponent);
   let description = '';
   let category = '';
 
@@ -113,10 +114,14 @@ export const ComponentInspector: React.FC<ComponentInspectorProps> = ({
       description = board.description;
       category = board.family;
     }
+  } else if (selectedComponent.type === 'ic-universal' || selectedComponent.type.startsWith('ic-')) {
+    const icNum = (selectedComponent.properties?.icNumber || selectedComponent.properties?.partNumber || selectedComponent.type.replace('ic-', '') || 'NE555').toUpperCase();
+    const matched = findIcDefinition(icNum);
+    category = 'ICs';
+    description = matched ? `${matched.name} (${matched.packageType}) - ${matched.description}` : `${selectedComponent.properties?.pinCount || 8}-Pin DIP Integrated Circuit`;
   } else {
     const template = COMPONENT_CATALOG.find(c => c.type === selectedComponent.type);
     if (template) {
-      pins = template.pins;
       description = template.description;
       category = template.category;
     }
@@ -866,7 +871,7 @@ export const ComponentInspector: React.FC<ComponentInspectorProps> = ({
                     max={1000}
                     step={1}
                     value={priV}
-                    onChange={(val) => onUpdateProperties(selectedComponent.id, { primaryVoltage: val })}
+                    onChange={(val) => onUpdateProperties(selectedComponent.id, { primaryVoltage: val, primaryVoltageExplicit: true })}
                     className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
                     placeholder="e.g. 220"
                   />
@@ -879,7 +884,7 @@ export const ComponentInspector: React.FC<ComponentInspectorProps> = ({
                     <button
                       key={v}
                       type="button"
-                      onClick={() => onUpdateProperties(selectedComponent.id, { primaryVoltage: v })}
+                      onClick={() => onUpdateProperties(selectedComponent.id, { primaryVoltage: v, primaryVoltageExplicit: true })}
                       className={`flex-1 py-0.5 text-[9px] font-mono rounded border transition text-center ${
                         priV === v
                           ? 'bg-amber-900/60 border-amber-500 text-amber-200 font-bold'
@@ -1216,114 +1221,486 @@ export const ComponentInspector: React.FC<ComponentInspectorProps> = ({
           </div>
         )}
 
-        {/* Zener Breakdown Voltage selector */}
-        {selectedComponent.type === 'diode-zener' && (
-          <div className="space-y-1">
-            <label className="text-[11px] text-slate-400">Zener Voltage (Vz):</label>
-            <select
-              value={selectedComponent.properties?.zenerVoltage ?? 5.1}
-              onChange={(e) =>
-                onUpdateProperties(selectedComponent.id, {
-                  zenerVoltage: parseFloat(e.target.value),
-                })
-              }
-              className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
-            >
-              <option value="3.3">3.3V (BZX55C3V3)</option>
-              <option value="5.1">5.1V (1N4733A)</option>
-              <option value="6.2">6.2V (1N4735A)</option>
-              <option value="9.1">9.1V (1N4739A)</option>
-              <option value="12.0">12.0V (1N4742A)</option>
-              <option value="15.0">15.0V (1N4744A)</option>
-            </select>
-          </div>
-        )}
+        {/* ========================================================= */}
+        {/* INTEGRATED CIRCUIT (IC) FULL PACKAGE CONFIGURATOR */}
+        {/* ========================================================= */}
+        {(selectedComponent.type === 'ic-universal' || selectedComponent.type.startsWith('ic-')) && (() => {
+          const currentIcNum = (selectedComponent.properties?.icNumber || selectedComponent.properties?.partNumber || selectedComponent.type.replace('ic-', '') || 'NE555').toUpperCase();
+          const currentPinCount = Number(selectedComponent.properties?.pinCount) || 8;
+          const matchedIc = findIcDefinition(currentIcNum);
 
-        {/* Constant Current Diode current limit */}
-        {selectedComponent.type === 'diode-constant-current' && (
-          <div className="space-y-1">
-            <label className="text-[11px] text-slate-400">Regulated Current Limit:</label>
-            <select
-              value={selectedComponent.properties?.currentLimitMa ?? 20}
-              onChange={(e) =>
-                onUpdateProperties(selectedComponent.id, {
-                  currentLimitMa: parseInt(e.target.value, 10),
-                })
-              }
-              className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
-            >
-              <option value="1">1.0 mA (1N5297)</option>
-              <option value="5">5.0 mA (1N5300)</option>
-              <option value="10">10.0 mA (1N5305)</option>
-              <option value="20">20.0 mA (CLD20 LED Driver)</option>
-              <option value="50">50.0 mA (High-Power CLD)</option>
-            </select>
-          </div>
-        )}
+          return (
+            <div className="space-y-3 p-3 rounded-lg bg-slate-900/90 border border-cyan-800/70 font-mono shadow-inner">
+              <div className="flex items-center justify-between border-b border-cyan-900/50 pb-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-300">
+                  <Cpu className="w-4 h-4 text-cyan-400" />
+                  <span>IC PACKAGE CONFIG (IC लाइब्रेरी)</span>
+                </div>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-bold">
+                  DIP-{currentPinCount}
+                </span>
+              </div>
 
-        {/* MOSFET Threshold Voltage (Vth) */}
-        {selectedComponent.type.startsWith('transistor-mosfet-') && (
-          <div className="space-y-1.5">
-            <div className="flex justify-between text-xs font-mono">
-              <span className="text-slate-400">Threshold Voltage (Vth):</span>
-              <span className="text-cyan-300 font-bold">
-                {selectedComponent.properties?.vth ?? 3.0}V
-              </span>
+              {/* 1. IC Part Number (Preset Selector & Custom Input) */}
+              <div className="space-y-1">
+                <div className="text-[10.5px] font-bold text-slate-300 flex justify-between">
+                  <span>IC Number (पार्ट नंबर):</span>
+                  {matchedIc && (
+                    <span className="text-[9px] text-emerald-400 truncate max-w-[130px]">
+                      ✓ {matchedIc.name.split('/')[0]}
+                    </span>
+                  )}
+                </div>
+
+                {/* Preset Dropdown */}
+                <select
+                  value={matchedIc?.partNumber || (BUILTIN_IC_LIBRARY.some(ic => ic.partNumber === currentIcNum) ? currentIcNum : 'custom')}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val !== 'custom') {
+                      const selected = BUILTIN_IC_LIBRARY.find(ic => ic.partNumber === val);
+                      if (selected) {
+                        onUpdateProperties(selectedComponent.id, {
+                          icNumber: selected.partNumber,
+                          pinCount: selected.pinCount,
+                          label: `U_${selected.partNumber.replace(/[^A-Z0-9]/gi, '')}`,
+                        });
+                      }
+                    }
+                  }}
+                  className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-cyan-300 focus:outline-none focus:border-cyan-500 cursor-pointer font-bold"
+                >
+                  <optgroup label="⏱ Timers & Oscillators">
+                    <option value="NE555">NE555 (Precision Timer DIP-8)</option>
+                  </optgroup>
+                  <optgroup label="📈 Operational Amplifiers">
+                    <option value="LM741">LM741 (Single Op-Amp DIP-8)</option>
+                    <option value="LM358">LM358 (Dual Op-Amp DIP-8)</option>
+                    <option value="LM386">LM386 (Audio Power Amp DIP-8)</option>
+                    <option value="LM324">LM324 (Quad Op-Amp DIP-14)</option>
+                  </optgroup>
+                  <optgroup label="⚡ Digital Logic Gates (74xx)">
+                    <option value="74HC00">74HC00 (Quad 2-In NAND DIP-14)</option>
+                    <option value="74HC04">74HC04 (Hex Inverter NOT DIP-14)</option>
+                    <option value="74HC08">74HC08 (Quad 2-In AND DIP-14)</option>
+                    <option value="74HC32">74HC32 (Quad 2-In OR DIP-14)</option>
+                    <option value="74HC86">74HC86 (Quad 2-In XOR DIP-14)</option>
+                  </optgroup>
+                  <optgroup label="🔢 Counters, Decoders & Registers">
+                    <option value="CD4017">CD4017 (Decade Counter / Chaser DIP-16)</option>
+                    <option value="74HC47">74HC47 (BCD to 7-Segment Decoder DIP-16)</option>
+                    <option value="74HC595">74HC595 (8-Bit Shift Register DIP-16)</option>
+                  </optgroup>
+                  <optgroup label="🚗 Motor Drivers & Darlington Arrays">
+                    <option value="L293D">L293D (Dual H-Bridge Motor Driver DIP-16)</option>
+                    <option value="ULN2003A">ULN2003A (7-Ch Darlington Sink Array DIP-16)</option>
+                  </optgroup>
+                  <optgroup label="💻 Microcontrollers (Standalone DIP)">
+                    <option value="ATmega328P">ATmega328P (AVR Standalone DIP-28)</option>
+                  </optgroup>
+                  <option value="custom">✏️ Custom / Type Any Number...</option>
+                </select>
+
+                {/* Free Text Input for typing ANY custom IC number */}
+                <div className="pt-1">
+                  <input
+                    type="text"
+                    value={selectedComponent.properties?.icNumber || ''}
+                    placeholder="Enter any IC number (e.g. 555, LM741, 7408, CD4017...)"
+                    onChange={(e) => {
+                      const typed = e.target.value.toUpperCase();
+                      const match = findIcDefinition(typed);
+                      onUpdateProperties(selectedComponent.id, {
+                        icNumber: typed,
+                        pinCount: match ? match.pinCount : currentPinCount,
+                      });
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-mono tracking-wider uppercase font-bold"
+                  />
+                  <span className="text-[9px] text-slate-400 mt-0.5 block">
+                    Type any IC number to dynamically transform into real IC.
+                  </span>
+                </div>
+              </div>
+
+              {/* 2. Pin Count (Pin Number) Selector */}
+              <div className="space-y-1.5 pt-1 border-t border-slate-800/80">
+                <div className="flex justify-between items-center text-[10.5px] font-bold text-slate-300">
+                  <span>Pin Count (पिनों की संख्या):</span>
+                  <span className="text-amber-400">{currentPinCount} Pins</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1">
+                  {[8, 14, 16, 18, 20, 24, 28, 40].map((count) => (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => onUpdateProperties(selectedComponent.id, { pinCount: count })}
+                      className={`py-1 rounded text-[10px] font-bold transition cursor-pointer border ${
+                        currentPinCount === count
+                          ? 'bg-cyan-600 border-cyan-400 text-white shadow-xs'
+                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {count} Pins
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. Live IC Status */}
+              <div className="p-2 rounded bg-slate-950 border border-slate-800 text-[10px] space-y-1">
+                <div className="flex justify-between text-slate-400">
+                  <span>Package:</span>
+                  <span className="text-slate-200 font-bold">DIP-{currentPinCount} ({currentPinCount > 20 ? '0.6" Wide' : '0.3" Standard'})</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Status:</span>
+                  <span className="text-emerald-400 font-bold">
+                    {selectedComponent.runtimeState?.stateSummary || 'Active & Ready'}
+                  </span>
+                </div>
+              </div>
             </div>
-            <input
-              type="range"
-              min="1.0"
-              max="5.0"
-              step="0.1"
-              value={Math.abs(selectedComponent.properties?.vth ?? 3.0)}
-              onChange={(e) =>
-                onUpdateProperties(selectedComponent.id, {
-                  vth: selectedComponent.type === 'transistor-mosfet-p' ? -parseFloat(e.target.value) : parseFloat(e.target.value),
-                })
-              }
-              className="w-full accent-cyan-400 cursor-pointer"
-            />
-          </div>
-        )}
+          );
+        })()}
 
-        {/* BJT Transistor Model */}
-        {selectedComponent.type === 'transistor-bjt-npn' && (
-          <div className="space-y-1">
-            <label className="text-[11px] text-slate-400">Transistor Part Model:</label>
-            <select
-              value={selectedComponent.properties?.model || '2N2222A'}
-              onChange={(e) =>
-                onUpdateProperties(selectedComponent.id, {
-                  model: e.target.value,
-                  hfe: e.target.value.startsWith('BC') ? 200 : 100,
-                })
-              }
-              className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
-            >
-              <option value="2N2222A">2N2222A (General Purpose NPN)</option>
-              <option value="BC547">BC547 (Low Noise Audio NPN)</option>
-              <option value="2N3904">2N3904 (Switching NPN)</option>
-            </select>
-          </div>
-        )}
+        {/* ========================================================= */}
+        {/* TRANSISTOR MODEL & PART NUMBER CHANGER (ALL TRANSISTORS) */}
+        {/* ========================================================= */}
+        {(selectedComponent.type.startsWith('transistor-')) && (() => {
+          const transType = selectedComponent.type;
+          const currentModel = selectedComponent.properties?.model || (
+            transType === 'transistor-bjt-npn' ? '2N2222A' :
+            transType === 'transistor-bjt-pnp' ? '2N3906' :
+            transType === 'transistor-mosfet-n' ? 'IRF540N' :
+            transType === 'transistor-mosfet-p' ? 'IRF9540' :
+            transType === 'transistor-jfet-n' ? '2N5457' : 'BT136-600E'
+          );
 
-        {selectedComponent.type === 'transistor-bjt-pnp' && (
-          <div className="space-y-1">
-            <label className="text-[11px] text-slate-400">Transistor Part Model:</label>
-            <select
-              value={selectedComponent.properties?.model || '2N3906'}
-              onChange={(e) =>
-                onUpdateProperties(selectedComponent.id, {
-                  model: e.target.value,
-                  hfe: e.target.value.startsWith('BC') ? 200 : 100,
-                })
-              }
-              className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
-            >
-              <option value="2N3906">2N3906 (General Purpose PNP)</option>
-              <option value="BC557">BC557 (Low Noise Audio PNP)</option>
-              <option value="2N2907">2N2907 (Switching PNP)</option>
-            </select>
+          const matchingPresets = TRANSISTOR_MODELS.filter(m => {
+            if (transType === 'transistor-bjt-npn') return m.type === 'npn';
+            if (transType === 'transistor-bjt-pnp') return m.type === 'pnp';
+            if (transType === 'transistor-mosfet-n') return m.type === 'mosfet-n';
+            if (transType === 'transistor-mosfet-p') return m.type === 'mosfet-p';
+            if (transType === 'transistor-jfet-n') return m.type === 'jfet-n';
+            if (transType === 'transistor-triac') return m.type === 'triac';
+            return false;
+          });
+
+          const currentSpec = TRANSISTOR_MODELS.find(m => m.model === currentModel);
+
+          return (
+            <div className="space-y-3 p-3 rounded-lg bg-slate-900/90 border border-amber-900/60 font-mono">
+              <div className="flex items-center justify-between border-b border-amber-900/40 pb-1.5">
+                <span className="text-xs font-bold text-amber-300">TRANSISTOR MODEL (नंबर बदलें)</span>
+                <span className="text-[9px] px-1 py-0.2 rounded bg-amber-950 text-amber-400 border border-amber-800/60 font-bold">
+                  {currentSpec?.package || 'TO-92'}
+                </span>
+              </div>
+
+              {/* Preset Selector */}
+              <div className="space-y-1">
+                <label className="text-[10px] text-slate-400 font-bold">Standard Models (पॉपुलर मॉडल):</label>
+                <select
+                  value={matchingPresets.some(m => m.model === currentModel) ? currentModel : 'custom'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val !== 'custom') {
+                      const spec = TRANSISTOR_MODELS.find(m => m.model === val);
+                      if (spec) {
+                        onUpdateProperties(selectedComponent.id, {
+                          model: spec.model,
+                          hfe: spec.hfe,
+                          vbeDrop: spec.vbeDrop,
+                          vth: spec.vth,
+                          vPinch: spec.vPinch,
+                          vGateTrigger: spec.vGateTrigger,
+                          maxCurrentA: spec.maxCurrentA,
+                        });
+                      }
+                    }
+                  }}
+                  className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-amber-300 focus:outline-none focus:border-amber-500 font-bold cursor-pointer"
+                >
+                  {matchingPresets.map((m) => (
+                    <option key={m.model} value={m.model}>
+                      {m.model} — {m.description}
+                    </option>
+                  ))}
+                  <option value="custom">✏️ Type Custom Number...</option>
+                </select>
+              </div>
+
+              {/* Custom Part Number Input */}
+              <div className="space-y-1">
+                <label className="text-[10px] text-slate-400 font-bold">Custom Model / Number (मनचाहा नंबर लिखें):</label>
+                <input
+                  type="text"
+                  value={selectedComponent.properties?.model || currentModel}
+                  placeholder="e.g. 2N2222, BC547, BD139, TIP120..."
+                  onChange={(e) => {
+                    const typed = e.target.value.toUpperCase();
+                    const spec = TRANSISTOR_MODELS.find(m => m.model.toUpperCase() === typed);
+                    onUpdateProperties(selectedComponent.id, {
+                      model: typed,
+                      hfe: spec?.hfe ?? (typed.startsWith('BC') ? 220 : 100),
+                      vbeDrop: spec?.vbeDrop ?? 0.65,
+                      vth: spec?.vth ?? 2.5,
+                      maxCurrentA: spec?.maxCurrentA ?? 0.8,
+                    });
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 font-mono font-bold tracking-wider"
+                />
+              </div>
+
+              {/* Live Specs display */}
+              <div className="p-2 rounded bg-slate-950 border border-slate-800 text-[10px] space-y-1">
+                {currentSpec?.hfe !== undefined && (
+                  <div className="flex justify-between text-slate-400">
+                    <span>Current Gain (hFE / β):</span>
+                    <span className="text-amber-400 font-bold">{selectedComponent.properties?.hfe ?? currentSpec.hfe}</span>
+                  </div>
+                )}
+                {currentSpec?.vbeDrop !== undefined && (
+                  <div className="flex justify-between text-slate-400">
+                    <span>Base-Emitter Drop (Vbe):</span>
+                    <span className="text-cyan-300 font-bold">{selectedComponent.properties?.vbeDrop ?? currentSpec.vbeDrop}V</span>
+                  </div>
+                )}
+                {currentSpec?.vth !== undefined && (
+                  <div className="flex justify-between text-slate-400">
+                    <span>Threshold Voltage (Vth):</span>
+                    <span className="text-cyan-300 font-bold">{selectedComponent.properties?.vth ?? currentSpec.vth}V</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-slate-400">
+                  <span>Conduction State:</span>
+                  <span className={`font-bold ${selectedComponent.runtimeState?.isConducting ? 'text-emerald-400' : 'text-slate-500'}`}>
+                    {selectedComponent.runtimeState?.state || (selectedComponent.runtimeState?.isConducting ? 'ON / CONDUCTING' : 'OFF / CUTOFF')}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ========================================================= */}
+        {/* DIODE MODEL & PART NUMBER CHANGER (ALL DIODES) */}
+        {/* ========================================================= */}
+        {(selectedComponent.type.startsWith('diode-')) && (() => {
+          const diodeType = selectedComponent.type;
+          const currentModel = selectedComponent.properties?.model || (
+            diodeType === 'diode-pn' ? '1N4007' :
+            diodeType === 'diode-zener' ? '1N4733A' :
+            diodeType === 'diode-schottky' ? '1N5819' :
+            diodeType === 'diode-diac' ? 'DB3' :
+            diodeType === 'diode-constant-current' ? 'CLD20' : '1N4007'
+          );
+
+          const matchingPresets = DIODE_MODELS.filter(d => {
+            if (diodeType === 'diode-pn') return d.type === 'pn';
+            if (diodeType === 'diode-zener') return d.type === 'zener';
+            if (diodeType === 'diode-schottky') return d.type === 'schottky';
+            if (diodeType === 'diode-diac') return d.type === 'diac';
+            if (diodeType === 'diode-constant-current') return d.type === 'cld';
+            if (diodeType === 'diode-varactor') return d.type === 'varactor';
+            return true;
+          });
+
+          const currentSpec = DIODE_MODELS.find(d => d.model === currentModel);
+
+          return (
+            <div className="space-y-3 p-3 rounded-lg bg-slate-900/90 border border-emerald-900/60 font-mono">
+              <div className="flex items-center justify-between border-b border-emerald-900/40 pb-1.5">
+                <span className="text-xs font-bold text-emerald-300">DIODE MODEL (डायोड नंबर बदलें)</span>
+                <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800/60 font-bold">
+                  {currentSpec?.package || 'DO-41'}
+                </span>
+              </div>
+
+              {/* Preset Selector */}
+              <div className="space-y-1">
+                <label className="text-[10px] text-slate-400 font-bold">Standard Models (पॉपुलर मॉडल):</label>
+                <select
+                  value={matchingPresets.some(d => d.model === currentModel) ? currentModel : 'custom'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val !== 'custom') {
+                      const spec = DIODE_MODELS.find(d => d.model === val);
+                      if (spec) {
+                        onUpdateProperties(selectedComponent.id, {
+                          model: spec.model,
+                          forwardDrop: spec.forwardDrop,
+                          zenerVoltage: spec.zenerVoltage,
+                          breakoverVoltage: spec.breakoverVoltage,
+                          currentLimitMa: spec.currentLimitMa,
+                        });
+                      }
+                    }
+                  }}
+                  className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-emerald-300 focus:outline-none focus:border-emerald-500 font-bold cursor-pointer"
+                >
+                  {matchingPresets.map((d) => (
+                    <option key={d.model} value={d.model}>
+                      {d.model} — {d.description}
+                    </option>
+                  ))}
+                  <option value="custom">✏️ Type Custom Number...</option>
+                </select>
+              </div>
+
+              {/* Custom Model Input */}
+              <div className="space-y-1">
+                <label className="text-[10px] text-slate-400 font-bold">Custom Model / Number (डायोड नंबर लिखें):</label>
+                <input
+                  type="text"
+                  value={selectedComponent.properties?.model || currentModel}
+                  placeholder="e.g. 1N4007, 1N4148, 1N4733A, 1N5819..."
+                  onChange={(e) => {
+                    const typed = e.target.value.toUpperCase();
+                    const spec = DIODE_MODELS.find(d => d.model.toUpperCase() === typed);
+                    onUpdateProperties(selectedComponent.id, {
+                      model: typed,
+                      forwardDrop: spec?.forwardDrop ?? (typed.startsWith('1N58') ? 0.25 : 0.7),
+                      zenerVoltage: spec?.zenerVoltage,
+                      breakoverVoltage: spec?.breakoverVoltage,
+                    });
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400 font-mono font-bold tracking-wider"
+                />
+              </div>
+
+              {/* Zener Voltage slider if zener */}
+              {diodeType === 'diode-zener' && (
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px] text-slate-300">
+                    <span>Zener Breakdown Voltage (Vz):</span>
+                    <span className="text-amber-400 font-bold">{selectedComponent.properties?.zenerVoltage ?? 5.1}V</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="2.4"
+                    max="24.0"
+                    step="0.1"
+                    value={Number(selectedComponent.properties?.zenerVoltage ?? 5.1)}
+                    onChange={(e) => onUpdateProperties(selectedComponent.id, { zenerVoltage: parseFloat(e.target.value) })}
+                    className="w-full accent-amber-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                  />
+                </div>
+              )}
+
+              {/* Live Status Display */}
+              <div className="p-2 rounded bg-slate-950 border border-slate-800 text-[10px] space-y-1">
+                <div className="flex justify-between text-slate-400">
+                  <span>Forward Drop (Vf):</span>
+                  <span className="text-emerald-400 font-bold">{selectedComponent.properties?.forwardDrop ?? (currentSpec?.forwardDrop ?? 0.7)}V</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>State:</span>
+                  <span className={`font-bold ${
+                    selectedComponent.runtimeState?.isZenerBreakdown
+                      ? 'text-amber-400 animate-pulse'
+                      : selectedComponent.runtimeState?.isForwardBiased
+                      ? 'text-emerald-400'
+                      : 'text-slate-500'
+                  }`}>
+                    {selectedComponent.runtimeState?.isZenerBreakdown
+                      ? '⚡ ZENER CLAMPED'
+                      : selectedComponent.runtimeState?.isForwardBiased
+                      ? 'FORWARD BIASED (ON)'
+                      : 'REVERSE / OFF'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* FUNCTION GENERATOR PROPERTIES */}
+        {selectedComponent.type === 'function-generator' && (
+          <div className="space-y-3 p-2.5 rounded bg-slate-900/80 border border-emerald-900/60 font-mono">
+            {/* Waveform selection buttons */}
+            <div>
+              <label className="text-[10px] text-slate-400 font-bold block mb-1">
+                WAVEFORM SELECT (तरंग रूप):
+              </label>
+              <div className="grid grid-cols-4 gap-1">
+                {(['sine', 'square', 'triangle', 'sawtooth'] as const).map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => onUpdateProperties(selectedComponent.id, { waveform: w })}
+                    className={`py-1 rounded text-[9px] font-bold uppercase transition cursor-pointer border ${
+                      (selectedComponent.properties?.waveform || 'sine') === w
+                        ? 'bg-emerald-600 border-emerald-400 text-white shadow-xs'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    {w === 'sine' ? '~ Sin' : w === 'square' ? '⎍ Sqr' : w === 'triangle' ? '⋀ Tri' : '⩘ Saw'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Frequency */}
+            <div>
+              <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                <span>Frequency:</span>
+                <span className="text-emerald-400 font-bold">
+                  {selectedComponent.properties?.frequency ?? 1000} Hz
+                </span>
+              </div>
+              <input
+                type="number"
+                min="1"
+                max="100000"
+                value={selectedComponent.properties?.frequency ?? 1000}
+                onChange={(e) =>
+                  onUpdateProperties(selectedComponent.id, { frequency: Number(e.target.value) || 1000 })
+                }
+                className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            {/* Amplitude Vpp */}
+            <div>
+              <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                <span>Amplitude (Vpp):</span>
+                <span className="text-amber-300 font-bold">
+                  {(Number(selectedComponent.properties?.amplitude) || 5.0).toFixed(1)} Vpp
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0.5"
+                max="24.0"
+                step="0.5"
+                value={Number(selectedComponent.properties?.amplitude) || 5.0}
+                onChange={(e) =>
+                  onUpdateProperties(selectedComponent.id, { amplitude: Number(e.target.value) })
+                }
+                className="w-full accent-amber-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+              />
+            </div>
+
+            {/* Master Output Switch */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateProperties(selectedComponent.id, {
+                    isOn: !(selectedComponent.properties?.isOn ?? true),
+                  })
+                }
+                className={`w-full py-1.5 rounded text-xs font-bold transition cursor-pointer border ${
+                  (selectedComponent.properties?.isOn ?? true)
+                    ? 'bg-emerald-600 border-emerald-400 text-white shadow-emerald-950/50'
+                    : 'bg-slate-800 border-slate-700 text-slate-400'
+                }`}
+              >
+                {(selectedComponent.properties?.isOn ?? true) ? 'OUTPUT: ACTIVE (ON)' : 'OUTPUT: MUTED (OFF)'}
+              </button>
+            </div>
           </div>
         )}
       </div>

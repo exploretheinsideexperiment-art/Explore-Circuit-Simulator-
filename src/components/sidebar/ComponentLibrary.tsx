@@ -34,6 +34,7 @@ export const ComponentLibrary: React.FC<ComponentLibraryProps> = ({
     { label: 'Motors', icon: Disc },
     { label: 'Modules', icon: Box },
     { label: 'Audio', icon: Volume2 },
+    { label: 'ICs', icon: Cpu },
     { label: 'Logic Gates', icon: Radio },
     { label: 'Power', icon: Zap },
     { label: 'Transistors', icon: Activity },

@@ -78,11 +78,22 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
 
   const allPins = getAllAvailablePins(components);
 
-  // Auto-connect probes to first available MCU or Power pins if not set
+  // Auto-connect probes to first available Transformer, AC Power, DC Power, or MCU pins if not set
   useEffect(() => {
     if (!redProbe && components.length > 0) {
+      const xform = components.find((c) => c.type === 'transformer');
+      const acSupply = components.find((c) => c.type === 'power-supply-adjustable-ac');
       const mcu = components.find((c) => c.type.startsWith('mcu-'));
-      if (mcu) {
+
+      if (xform) {
+        setRedProbe({ compId: xform.id, pinId: 'SEC1' });
+        setBlackProbe({ compId: xform.id, pinId: 'SEC2' });
+        setDialPos('V_AC');
+      } else if (acSupply && !mcu) {
+        setRedProbe({ compId: acSupply.id, pinId: 'LIVE' });
+        setBlackProbe({ compId: acSupply.id, pinId: 'NEUTRAL' });
+        setDialPos('V_AC');
+      } else if (mcu) {
         setRedProbe({ compId: mcu.id, pinId: '2' }); // GPIO 2
         setBlackProbe({ compId: mcu.id, pinId: 'GND' });
       } else {
@@ -93,6 +104,53 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
       }
     }
   }, [components]);
+
+  const handleConnectToTransformerSec = () => {
+    const xform = components.find((c) => c.type === 'transformer');
+    if (xform) {
+      setRedProbe({ compId: xform.id, pinId: 'SEC1' });
+      setBlackProbe({ compId: xform.id, pinId: 'SEC2' });
+      setDialPos('V_AC');
+    }
+  };
+
+  const handleConnectToTransformerPri = () => {
+    const xform = components.find((c) => c.type === 'transformer');
+    if (xform) {
+      setRedProbe({ compId: xform.id, pinId: 'PRI1' });
+      setBlackProbe({ compId: xform.id, pinId: 'PRI2' });
+      setDialPos('V_AC');
+    }
+  };
+
+  const handleConnectToTransformerCt = () => {
+    const xform = components.find((c) => c.type === 'transformer');
+    if (xform) {
+      setRedProbe({ compId: xform.id, pinId: 'SEC1' });
+      setBlackProbe({ compId: xform.id, pinId: 'SEC_CT' });
+      setDialPos('V_AC');
+    }
+  };
+
+  const handleConnectToAc = () => {
+    const ac = components.find((c) => c.type === 'power-supply-adjustable-ac');
+    if (ac) {
+      setRedProbe({ compId: ac.id, pinId: 'LIVE' });
+      setBlackProbe({ compId: ac.id, pinId: 'NEUTRAL' });
+      setDialPos('V_AC');
+    }
+  };
+
+  const handleConnectToDc = () => {
+    const dc = components.find(
+      (c) => c.type === 'power-supply-adjustable-dc' || c.type.startsWith('power-supply-')
+    );
+    if (dc) {
+      setRedProbe({ compId: dc.id, pinId: 'VCC' });
+      setBlackProbe({ compId: dc.id, pinId: 'GND' });
+      setDialPos('V_DC');
+    }
+  };
 
   // Unified Pointer Dragging (works with mouse, touch, and pen)
   const handlePointerDownHeader = (e: React.PointerEvent) => {
@@ -173,8 +231,17 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
   const redKey = redProbe ? `${redProbe.compId}:${redProbe.pinId}` : '';
   const blackKey = blackProbe ? `${blackProbe.compId}:${blackProbe.pinId}` : '';
 
-  const vRed = (redKey && pinStates && pinStates[redKey]?.voltage !== undefined) ? pinStates[redKey].voltage : 0;
-  const vBlack = (blackKey && pinStates && pinStates[blackKey]?.voltage !== undefined) ? pinStates[blackKey].voltage : 0;
+  const redState = (redKey && pinStates) ? pinStates[redKey] : null;
+  const blackState = (blackKey && pinStates) ? pinStates[blackKey] : null;
+
+  const vRed = (redState && redState.voltage !== undefined) ? redState.voltage : 0;
+  const vBlack = (blackState && blackState.voltage !== undefined) ? blackState.voltage : 0;
+
+  const isRedAc = Boolean(redState?.isAc);
+  const isBlackAc = Boolean(blackState?.isAc);
+  const isAcSignal = isRedAc || isBlackAc;
+  const acFreq = redState?.frequency || blackState?.frequency || 50;
+  const acWave = redState?.waveform || blackState?.waveform || 'sine';
 
   // Calculate live measurement
   let displayValue = '0.000';
@@ -189,28 +256,94 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
     barPercentage = 0;
   } else if (dialPos === 'V_DC') {
     const vDiff = vRed - vBlack;
-    displayUnit = 'V';
-    const sign = vDiff > 0 ? '' : vDiff < 0 ? '-' : ' ';
-    const absVal = Math.abs(vDiff);
-    if (absVal < 0.1 && absVal > 0.0001) {
-      displayValue = `${(vDiff * 1000).toFixed(1)}`;
-      displayUnit = 'mV';
-      barPercentage = Math.min(100, (absVal / 0.1) * 100);
+    const isRedXform = redProbe && components.find(c => c.id === redProbe.compId)?.type === 'transformer';
+    const isBlackXform = blackProbe && components.find(c => c.id === blackProbe.compId)?.type === 'transformer';
+
+    // If measuring AC signal or transformer in DC mode, show AC RMS value with AC indicator
+    if (isAcSignal || isRedXform || isBlackXform) {
+      const xform = components.find(c => c.id === redProbe?.compId || c.id === blackProbe?.compId);
+      const rms = Math.abs(vDiff) > 0 ? Math.abs(vDiff) : (vRed || vBlack || Number(xform?.properties?.vSec) || Number(xform?.properties?.vPri) || 0);
+      displayUnit = 'V~';
+      displayValue = rms >= 100 ? rms.toFixed(1) : rms >= 10 ? rms.toFixed(2) : rms.toFixed(3);
+      barPercentage = Math.min(100, (rms / 50) * 100);
     } else {
-      displayValue = `${sign}${absVal.toFixed(3)}`;
-      barPercentage = Math.min(100, (absVal / 5.0) * 100);
+      displayUnit = 'V';
+      const sign = vDiff > 0 ? '' : vDiff < 0 ? '-' : ' ';
+      const absVal = Math.abs(vDiff);
+      if (absVal < 0.1 && absVal > 0.0001) {
+        displayValue = `${(vDiff * 1000).toFixed(1)}`;
+        displayUnit = 'mV';
+      } else if (absVal >= 100) {
+        displayValue = `${sign}${absVal.toFixed(1)}`;
+      } else if (absVal >= 10) {
+        displayValue = `${sign}${absVal.toFixed(2)}`;
+      } else {
+        displayValue = `${sign}${absVal.toFixed(3)}`;
+      }
+      const maxBar = absVal > 50 ? 250 : absVal > 20 ? 50 : absVal > 5 ? 20 : 5;
+      barPercentage = Math.min(100, (absVal / maxBar) * 100);
     }
   } else if (dialPos === 'V_AC') {
-    const pwmRed = (redKey && pinStates && pinStates[redKey]?.pwmDuty) ? pinStates[redKey].pwmDuty! : 0;
-    if (pwmRed > 0) {
-      const vPeak = Math.max(vRed, 3.3);
-      const rms = (vPeak * Math.sqrt(pwmRed / 255)).toFixed(3);
-      displayValue = rms;
-    } else {
-      displayValue = '0.000';
+    const pwmRed = redState?.pwmDuty ?? 0;
+    const pwmBlack = blackState?.pwmDuty ?? 0;
+    const vDiff = Math.abs(vRed - vBlack);
+
+    let rms = 0;
+    const isRedTransformer = redProbe && components.find(c => c.id === redProbe.compId)?.type === 'transformer';
+    const isBlackTransformer = blackProbe && components.find(c => c.id === blackProbe.compId)?.type === 'transformer';
+    const sameTransformer = isRedTransformer && isBlackTransformer && redProbe?.compId === blackProbe?.compId;
+
+    if (sameTransformer) {
+      const xform = components.find(c => c.id === redProbe?.compId);
+      const secType = xform?.properties?.secondaryType || 'standard';
+      const rPin = redProbe!.pinId;
+      const bPin = blackProbe!.pinId;
+
+      // Primary terminals (PRI1 to PRI2)
+      if ((rPin === 'PRI1' && bPin === 'PRI2') || (rPin === 'PRI2' && bPin === 'PRI1')) {
+        rms = Math.abs(vRed - vBlack) || Math.max(vRed, vBlack) || Number(xform?.properties?.vPri) || 0;
+      }
+      // Secondary terminals in Center-Tapped mode: SEC1 to SEC2 is 2x V_sec (e.g. 12 + 12 = 24V)
+      else if (secType === 'center-tapped' && ((rPin === 'SEC1' && bPin === 'SEC2') || (rPin === 'SEC2' && bPin === 'SEC1'))) {
+        rms = (vRed > 0 && vBlack > 0 ? (vRed + vBlack) : Math.max(vRed, vBlack) * 2) || (Number(xform?.properties?.vSec || 12) * 2);
+      }
+      // Secondary to Center-Tap (SEC1 to CT or SEC2 to CT) -> V_sec (e.g. 12V)
+      else if ((rPin.startsWith('SEC') && bPin === 'SEC_CT') || (bPin.startsWith('SEC') && rPin === 'SEC_CT')) {
+        rms = (rPin === 'SEC_CT' ? vBlack : vRed) || Number(xform?.properties?.vSec || 12);
+      }
+      // Standard secondary (SEC1 to SEC2)
+      else {
+        rms = Math.abs(vRed - vBlack) || Math.max(vRed, vBlack) || Number(xform?.properties?.vSec) || 0;
+      }
+    } else if (isRedTransformer || isBlackTransformer) {
+      // One probe on transformer, one on circuit node
+      const xform = components.find(c => c.id === redProbe?.compId || c.id === blackProbe?.compId);
+      rms = vDiff > 0 ? vDiff : (vRed || vBlack || Number(xform?.properties?.vSec) || 0);
+    } else if (isAcSignal) {
+      // True RMS AC voltage from AC Power Source or AC net
+      rms = vDiff > 0 ? vDiff : (vRed || vBlack || 0);
+    } else if (pwmRed > 0 || pwmBlack > 0) {
+      const activePwm = pwmRed > 0 ? pwmRed : pwmBlack;
+      const peak = Math.max(vRed, vBlack, 3.3);
+      rms = peak * Math.sqrt(activePwm / 255);
+    } else if (vDiff > 0) {
+      // General AC measurement across energized nodes
+      rms = vDiff;
     }
+
     displayUnit = 'V~';
-    barPercentage = Math.min(100, (parseFloat(displayValue) / 5.0) * 100);
+    if (rms >= 100) {
+      displayValue = rms.toFixed(1);
+    } else if (rms >= 10) {
+      displayValue = rms.toFixed(2);
+    } else if (rms < 0.1 && rms > 0.0001) {
+      displayValue = (rms * 1000).toFixed(1);
+      displayUnit = 'mV~';
+    } else {
+      displayValue = rms.toFixed(3);
+    }
+    const maxBar = rms > 50 ? 250 : rms > 20 ? 50 : rms > 5 ? 20 : 5;
+    barPercentage = Math.min(100, (rms / maxBar) * 100);
   } else if (dialPos === 'RES') {
     if (!redProbe || !blackProbe) {
       displayValue = 'O.L';
@@ -298,8 +431,8 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
   } else if (dialPos === 'MA_DC') {
     const vDiff = Math.abs(vRed - vBlack);
     const iMilli = (vDiff / 220) * 1000;
-    displayValue = iMilli.toFixed(2);
-    displayUnit = 'mA';
+    displayValue = iMilli >= 100 ? iMilli.toFixed(1) : iMilli.toFixed(2);
+    displayUnit = isAcSignal ? 'mA~' : 'mA';
     barPercentage = Math.min(100, (iMilli / 25) * 100);
   }
 
@@ -458,19 +591,49 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
               )}
             </div>
             <div>
-              {dialPos === 'V_DC' && <span>DC</span>}
-              {dialPos === 'V_AC' && <span>AC ~</span>}
+              {dialPos === 'V_DC' && (
+                <div className="flex items-center gap-1">
+                  <span>DC</span>
+                  {isAcSignal && (
+                    <button
+                      onClick={() => setDialPos('V_AC')}
+                      className="text-[7.5px] bg-cyan-900/90 hover:bg-cyan-700 text-cyan-200 px-1 py-0.2 rounded font-bold transition cursor-pointer border border-cyan-500/50 animate-pulse"
+                      title="AC detected! Click to switch dial to AC V~ mode"
+                    >
+                      ~AC DETECTED (Click V~)
+                    </button>
+                  )}
+                </div>
+              )}
+              {dialPos === 'V_AC' && (
+                <div className="flex items-center gap-1">
+                  <span className="font-bold text-amber-300">AC ~ True RMS</span>
+                  {isAcSignal && (
+                    <span className="text-[7.5px] text-cyan-300 font-mono">
+                      {acFreq}Hz {acWave}
+                    </span>
+                  )}
+                </div>
+              )}
               {dialPos === 'DIODE' && <span>DIODE</span>}
-              {dialPos === 'MA_DC' && <span>mA DC</span>}
+              {dialPos === 'MA_DC' && <span>{isAcSignal ? 'mA AC ~' : 'mA DC'}</span>}
             </div>
           </div>
 
           {/* Main 7-Segment Value Display */}
           <div className="flex items-baseline justify-end gap-1.5 my-0.5 min-h-[28px]">
             {dialPos === 'OFF' ? (
-              <span className="text-[11px] font-mono text-zinc-600 font-bold tracking-widest my-auto pr-1">
-                OFF
-              </span>
+              <button
+                type="button"
+                onClick={() => setDialPos(isAcSignal ? 'V_AC' : 'V_DC')}
+                className="text-[10px] font-mono text-zinc-500 hover:text-amber-300 font-bold tracking-wider my-auto pr-1 flex items-center gap-1 cursor-pointer transition"
+                title="Click to turn Multimeter ON"
+              >
+                <span>OFF</span>
+                <span className="text-[8px] bg-zinc-800 text-zinc-400 px-1 py-0.5 rounded border border-zinc-700 hover:border-amber-400 hover:text-amber-300">
+                  CLICK TO POWER ON
+                </span>
+              </button>
             ) : (
               <>
                 <span
@@ -660,7 +823,92 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
 
             {/* Probe Assignment Drawer */}
             {showProbeSelector && (
-              <div className="mt-2 p-2 bg-zinc-900 border border-zinc-700 rounded-lg space-y-1.5">
+              <div className="mt-2 p-2 bg-zinc-900 border border-zinc-700 rounded-lg space-y-2">
+                {/* Quick Connect Presets */}
+                <div className="space-y-1">
+                  <div className="text-[9px] font-mono text-zinc-400 font-bold flex items-center gap-1">
+                    <span>⚡ 1-CLICK QUICK CONNECT:</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      onClick={() => {
+                        const fg = components.find((c) => c.type === 'function-generator');
+                        if (fg) {
+                          setRedProbe({ compId: fg.id, pinId: 'OUT' });
+                          setBlackProbe({ compId: fg.id, pinId: 'GND' });
+                        } else {
+                          setRedProbe({ compId: '__func_gen__', pinId: 'OUT' });
+                          setBlackProbe({ compId: '__func_gen__', pinId: 'GND' });
+                        }
+                        setDialPos('V_AC');
+                      }}
+                      className="px-2 py-0.5 rounded text-[8.5px] font-mono font-bold bg-emerald-950 hover:bg-emerald-800 border border-emerald-500/60 text-emerald-200 transition cursor-pointer flex items-center gap-1"
+                      title="Connect Red to Function Generator OUT, Black to GND, and switch knob to V~"
+                    >
+                      <span>~ Func Gen (OUT / GND)</span>
+                    </button>
+                    {components.some((c) => c.type === 'transformer') && (
+                      <>
+                        <button
+                          onClick={handleConnectToTransformerSec}
+                          className="px-2 py-0.5 rounded text-[8.5px] font-mono font-bold bg-amber-950/90 hover:bg-amber-800 border border-amber-500/60 text-amber-200 transition cursor-pointer flex items-center gap-1"
+                          title="Connect Red to Transformer SEC1, Black to SEC2, and switch knob to V~"
+                        >
+                          <span>~ Transformer SEC (S1 / S2)</span>
+                        </button>
+                        <button
+                          onClick={handleConnectToTransformerPri}
+                          className="px-2 py-0.5 rounded text-[8.5px] font-mono font-bold bg-amber-950/90 hover:bg-amber-800 border border-amber-500/60 text-amber-200 transition cursor-pointer flex items-center gap-1"
+                          title="Connect Red to Transformer PRI1, Black to PRI2, and switch knob to V~"
+                        >
+                          <span>~ Transformer PRI (P1 / P2)</span>
+                        </button>
+                        <button
+                          onClick={handleConnectToTransformerCt}
+                          className="px-2 py-0.5 rounded text-[8.5px] font-mono font-bold bg-amber-950/90 hover:bg-amber-800 border border-amber-500/60 text-amber-200 transition cursor-pointer flex items-center gap-1"
+                          title="Connect Red to Transformer SEC1, Black to SEC_CT, and switch knob to V~"
+                        >
+                          <span>~ Transformer CT (S1 / CT)</span>
+                        </button>
+                      </>
+                    )}
+                    {components.some((c) => c.type === 'power-supply-adjustable-ac') && (
+                      <button
+                        onClick={handleConnectToAc}
+                        className="px-2 py-0.5 rounded text-[8.5px] font-mono font-bold bg-cyan-950 hover:bg-cyan-800 border border-cyan-500/60 text-cyan-200 transition cursor-pointer flex items-center gap-1"
+                        title="Connect Red to LIVE, Black to NEUTRAL, and switch knob to V~"
+                      >
+                        <span>~ AC Source (L / N)</span>
+                      </button>
+                    )}
+                    {components.some((c) => c.type === 'power-supply-adjustable-dc' || c.type.startsWith('power-supply-')) && (
+                      <button
+                        onClick={handleConnectToDc}
+                        className="px-2 py-0.5 rounded text-[8.5px] font-mono font-bold bg-amber-950 hover:bg-amber-800 border border-amber-500/60 text-amber-200 transition cursor-pointer flex items-center gap-1"
+                        title="Connect Red to VCC, Black to GND, and switch knob to V DC"
+                      >
+                        <span>⎓ DC Supply (+ / -)</span>
+                      </button>
+                    )}
+                    {components.some((c) => c.type.startsWith('mcu-')) && (
+                      <button
+                        onClick={() => {
+                          const mcu = components.find((c) => c.type.startsWith('mcu-'));
+                          if (mcu) {
+                            setRedProbe({ compId: mcu.id, pinId: '2' });
+                            setBlackProbe({ compId: mcu.id, pinId: 'GND' });
+                            setDialPos('V_DC');
+                          }
+                        }}
+                        className="px-2 py-0.5 rounded text-[8.5px] font-mono font-bold bg-emerald-950 hover:bg-emerald-800 border border-emerald-500/60 text-emerald-200 transition cursor-pointer flex items-center gap-1"
+                        title="Connect Red to MCU GPIO 2, Black to GND"
+                      >
+                        <span>MCU (GPIO 2 / GND)</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
                 <div>
                   <label className="text-[10px] font-mono text-red-400 font-bold block mb-0.5">
                     RED PROBE (+) LEAD:
@@ -705,18 +953,22 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
               </div>
             )}
 
-            {/* Banana Jacks representation on bottom */}
-            <div className="mt-2 pt-1.5 border-t border-zinc-800 flex justify-around">
+            {/* Banana Jacks representation on bottom (clickable to open probe config) */}
+            <div
+              onClick={() => setShowProbeSelector(!showProbeSelector)}
+              className="mt-2 pt-1.5 border-t border-zinc-800 flex justify-around cursor-pointer hover:bg-zinc-900/50 rounded-b transition pb-0.5"
+              title="Click banana jacks to configure probes"
+            >
               <div className="flex flex-col items-center">
-                <div className="w-3.5 h-3.5 rounded-full bg-red-600 border-2 border-zinc-950 shadow-inner" />
+                <div className="w-3.5 h-3.5 rounded-full bg-red-600 border-2 border-zinc-950 shadow-inner hover:scale-110 transition" />
                 <span className="text-[8px] font-mono text-red-400 mt-0.5">V Ω</span>
               </div>
               <div className="flex flex-col items-center">
-                <div className="w-3.5 h-3.5 rounded-full bg-zinc-900 border-2 border-zinc-700 shadow-inner" />
+                <div className="w-3.5 h-3.5 rounded-full bg-zinc-900 border-2 border-zinc-700 shadow-inner hover:scale-110 transition" />
                 <span className="text-[8px] font-mono text-zinc-400 mt-0.5">COM</span>
               </div>
               <div className="flex flex-col items-center">
-                <div className="w-3.5 h-3.5 rounded-full bg-red-900 border-2 border-zinc-950 shadow-inner" />
+                <div className="w-3.5 h-3.5 rounded-full bg-red-900 border-2 border-zinc-950 shadow-inner hover:scale-110 transition" />
                 <span className="text-[8px] font-mono text-red-500 mt-0.5">mA A</span>
               </div>
             </div>

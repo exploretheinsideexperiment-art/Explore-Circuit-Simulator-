@@ -1,7 +1,9 @@
 /**
  * Complete Electronic Component Library definitions
  */
-import { ComponentTemplate } from '../../types';
+import { ComponentTemplate, CircuitComponent, PinDef } from '../../types';
+import { getIcPins, getDipDimensions, findIcDefinition } from './icLibrary';
+import { SUPPORTED_BOARDS } from '../mcu/boards';
 
 export const COMPONENT_CATALOG: ComponentTemplate[] = [
   // --- Microcontrollers ---
@@ -585,7 +587,7 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
     type: 'power-supply-adjustable-ac',
     name: 'Adjustable AC Power Source',
     category: 'Power',
-    description: 'Variable AC Power Supply & Function Generator (1V - 240V AC RMS, 1Hz - 100kHz) with waveform selection (Sine, Square, Triangle).',
+    description: 'Variable AC Power Supply & Function Generator (1V - 240V AC RMS, 1Hz - 100kHz) with waveform selection (Sine, Square, Triangle, Sawtooth).',
     width: 140,
     height: 100,
     pins: [
@@ -598,6 +600,27 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
       waveform: 'sine',
       isOn: true,
       label: 'AC SOURCE'
+    }
+  },
+  {
+    type: 'function-generator',
+    name: 'DDS Function Generator',
+    category: 'Power',
+    description: 'Precision DDS Waveform Generator with Sine, Square, Triangle, and Sawtooth outputs (1Hz - 100kHz, 0.1V - 20V Vpp) with dedicated probe terminals.',
+    width: 140,
+    height: 100,
+    pins: [
+      { id: 'OUT', name: 'Main Output (SIG +)', label: 'OUT', type: 'power_vcc', x: 40, y: 84, voltage: 5.0 },
+      { id: 'GND', name: 'Ground (GND -)', label: 'GND', type: 'power_gnd', x: 100, y: 84, voltage: 0 },
+    ],
+    defaultProperties: {
+      waveform: 'sine',
+      frequency: 1000,
+      amplitude: 5.0,
+      offset: 0.0,
+      duty: 50,
+      isOn: true,
+      label: 'FUNC GEN'
     }
   },
   {
@@ -953,9 +976,293 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
       breakoverVoltage: 32.0,
       label: 'DIAC1'
     }
+  },
+
+  // ==========================================
+  // --- Integrated Circuits (Full Package IC Library) ---
+  // ==========================================
+  {
+    type: 'ic-universal',
+    name: 'Universal Configurable IC (DIP Package)',
+    category: 'ICs',
+    description: 'Fully configurable Integrated Circuit (DIP-8 to DIP-40). Enter ANY IC part number (e.g. NE555, LM741, 7408, CD4017, L293D) or change pin number to transform into original real IC with accurate pinout and simulation behavior.',
+    width: 88,
+    height: 106,
+    pins: getIcPins('NE555', 8),
+    defaultProperties: {
+      icNumber: 'NE555',
+      pinCount: 8,
+      label: 'U1'
+    }
+  },
+  {
+    type: 'ic-ne555',
+    name: 'NE555 Precision Timer IC (DIP-8)',
+    category: 'ICs',
+    description: 'Classic 555 precision timing IC. Astable multivibrator, monostable pulse generator, PWM oscillator (Pins: GND, TRIG, OUT, RST, CTRL, THRES, DISCH, VCC).',
+    width: 88,
+    height: 106,
+    pins: getIcPins('NE555', 8),
+    defaultProperties: {
+      icNumber: 'NE555',
+      pinCount: 8,
+      label: 'U_555'
+    }
+  },
+  {
+    type: 'ic-lm741',
+    name: 'LM741 Operational Amplifier (DIP-8)',
+    category: 'ICs',
+    description: 'High gain general-purpose operational amplifier with inverting & non-inverting inputs, offset null, and analog amplified output.',
+    width: 88,
+    height: 106,
+    pins: getIcPins('LM741', 8),
+    defaultProperties: {
+      icNumber: 'LM741',
+      pinCount: 8,
+      label: 'U_741'
+    }
+  },
+  {
+    type: 'ic-lm358',
+    name: 'LM358 Dual Op-Amp (DIP-8)',
+    category: 'ICs',
+    description: 'Two independent, high-gain, internally frequency compensated operational amplifiers for single-supply DC operation.',
+    width: 88,
+    height: 106,
+    pins: getIcPins('LM358', 8),
+    defaultProperties: {
+      icNumber: 'LM358',
+      pinCount: 8,
+      label: 'U_358'
+    }
+  },
+  {
+    type: 'ic-lm386',
+    name: 'LM386 Audio Power Amplifier (DIP-8)',
+    category: 'ICs',
+    description: 'Low-voltage audio power amplifier with internal gain of 20 to 200, capable of directly driving speaker loads from 4V-12V supply.',
+    width: 88,
+    height: 106,
+    pins: getIcPins('LM386', 8),
+    defaultProperties: {
+      icNumber: 'LM386',
+      pinCount: 8,
+      label: 'U_386'
+    }
+  },
+  {
+    type: 'ic-7400',
+    name: '74HC00 Quad 2-Input NAND (DIP-14)',
+    category: 'ICs',
+    description: 'High-speed CMOS Quad 2-Input NAND gate IC in classic 14-pin DIP package.',
+    width: 88,
+    height: 166,
+    pins: getIcPins('74HC00', 14),
+    defaultProperties: {
+      icNumber: '74HC00',
+      pinCount: 14,
+      label: 'U_7400'
+    }
+  },
+  {
+    type: 'ic-7404',
+    name: '74HC04 Hex Inverter NOT (DIP-14)',
+    category: 'ICs',
+    description: 'Hex Inverting Gate IC with six independent logic inverters in 14-pin DIP package.',
+    width: 88,
+    height: 166,
+    pins: getIcPins('74HC04', 14),
+    defaultProperties: {
+      icNumber: '74HC04',
+      pinCount: 14,
+      label: 'U_7404'
+    }
+  },
+  {
+    type: 'ic-7408',
+    name: '74HC08 Quad 2-Input AND (DIP-14)',
+    category: 'ICs',
+    description: 'Quad 2-Input digital logic AND gate IC in 14-pin DIP package.',
+    width: 88,
+    height: 166,
+    pins: getIcPins('74HC08', 14),
+    defaultProperties: {
+      icNumber: '74HC08',
+      pinCount: 14,
+      label: 'U_7408'
+    }
+  },
+  {
+    type: 'ic-7432',
+    name: '74HC32 Quad 2-Input OR (DIP-14)',
+    category: 'ICs',
+    description: 'Quad 2-Input digital logic OR gate IC in 14-pin DIP package.',
+    width: 88,
+    height: 166,
+    pins: getIcPins('74HC32', 14),
+    defaultProperties: {
+      icNumber: '74HC32',
+      pinCount: 14,
+      label: 'U_7432'
+    }
+  },
+  {
+    type: 'ic-7486',
+    name: '74HC86 Quad 2-Input XOR (DIP-14)',
+    category: 'ICs',
+    description: 'Quad 2-Input Exclusive-OR digital logic gate IC in 14-pin DIP package.',
+    width: 88,
+    height: 166,
+    pins: getIcPins('74HC86', 14),
+    defaultProperties: {
+      icNumber: '74HC86',
+      pinCount: 14,
+      label: 'U_7486'
+    }
+  },
+  {
+    type: 'ic-cd4017',
+    name: 'CD4017 Decade Counter / Chaser (DIP-16)',
+    category: 'ICs',
+    description: '5-stage Johnson decade counter with 10 sequential decoded outputs (Q0-Q9) for running LED chaser lights and pulse dividers.',
+    width: 88,
+    height: 186,
+    pins: getIcPins('CD4017', 16),
+    defaultProperties: {
+      icNumber: 'CD4017',
+      pinCount: 16,
+      label: 'U_4017'
+    }
+  },
+  {
+    type: 'ic-7447',
+    name: '74HC47 BCD to 7-Segment Decoder (DIP-16)',
+    category: 'ICs',
+    description: '4-bit BCD to active-low 7-segment display driver for common-anode LED displays.',
+    width: 88,
+    height: 186,
+    pins: getIcPins('74HC47', 16),
+    defaultProperties: {
+      icNumber: '74HC47',
+      pinCount: 16,
+      label: 'U_7447'
+    }
+  },
+  {
+    type: 'ic-74595',
+    name: '74HC595 8-Bit Shift Register (DIP-16)',
+    category: 'ICs',
+    description: 'Serial-in parallel-out 8-bit shift register with storage latches and 3-state outputs.',
+    width: 88,
+    height: 186,
+    pins: getIcPins('74HC595', 16),
+    defaultProperties: {
+      icNumber: '74HC595',
+      pinCount: 16,
+      label: 'U_595'
+    }
+  },
+  {
+    type: 'ic-l293d',
+    name: 'L293D Dual H-Bridge Motor Driver (DIP-16)',
+    category: 'ICs',
+    description: 'Quad half-H / dual full-H bridge motor driver IC for bidirectional DC motor and stepper motor control with internal clamp diodes.',
+    width: 88,
+    height: 186,
+    pins: getIcPins('L293D', 16),
+    defaultProperties: {
+      icNumber: 'L293D',
+      pinCount: 16,
+      label: 'U_L293'
+    }
+  },
+  {
+    type: 'ic-uln2003',
+    name: 'ULN2003A 7-Ch Darlington Array (DIP-16)',
+    category: 'ICs',
+    description: 'High-voltage, high-current Darlington transistor array with suppression diodes for driving relays, solenoids, and stepper motors.',
+    width: 88,
+    height: 186,
+    pins: getIcPins('ULN2003A', 16),
+    defaultProperties: {
+      icNumber: 'ULN2003A',
+      pinCount: 16,
+      label: 'U_ULN'
+    }
+  },
+  {
+    type: 'ic-lm324',
+    name: 'LM324 Quad Operational Amplifier (DIP-14)',
+    category: 'ICs',
+    description: 'Four independent, high-gain, internally compensated op-amps in a compact 14-pin DIP package.',
+    width: 88,
+    height: 166,
+    pins: getIcPins('LM324', 14),
+    defaultProperties: {
+      icNumber: 'LM324',
+      pinCount: 14,
+      label: 'U_324'
+    }
+  },
+  {
+    type: 'ic-atmega328p',
+    name: 'ATmega328P Standalone AVR MCU (DIP-28)',
+    category: 'ICs',
+    description: 'Microchip ATmega328P 8-bit AVR microcontroller in 28-pin DIP package with full GPIO, PWM, and Analog ADC pinout.',
+    width: 116,
+    height: 306,
+    pins: getIcPins('ATmega328P', 28),
+    defaultProperties: {
+      icNumber: 'ATmega328P',
+      pinCount: 28,
+      label: 'U_MCU'
+    }
   }
 ];
 
 export function getTemplateByType(type: string): ComponentTemplate | undefined {
   return COMPONENT_CATALOG.find(c => c.type === type);
+}
+
+/**
+ * Universal dynamic pin resolver for any component (MCUs, ICs with custom pin counts, or passive components)
+ */
+export function getComponentPins(comp: CircuitComponent): PinDef[] {
+  if (comp.type.startsWith('mcu-')) {
+    const boardId = comp.properties?.boardId || 'esp32-devkit-v1';
+    return SUPPORTED_BOARDS[boardId]?.pins || [];
+  }
+
+  if (comp.type === 'ic-universal' || comp.type.startsWith('ic-')) {
+    const icNum = (comp.properties?.icNumber || comp.properties?.partNumber || comp.type.replace('ic-', '') || 'NE555').toUpperCase();
+    const pinCount = Number(comp.properties?.pinCount) || undefined;
+    return getIcPins(icNum, pinCount);
+  }
+
+  const template = COMPONENT_CATALOG.find((c) => c.type === comp.type);
+  return template?.pins || [];
+}
+
+/**
+ * Universal physical dimension resolver for any component (adjusts for custom pin counts)
+ */
+export function getComponentDimensions(comp: CircuitComponent): { width: number; height: number } {
+  if (comp.type.startsWith('mcu-')) {
+    const boardId = comp.properties?.boardId || 'esp32-devkit-v1';
+    const board = SUPPORTED_BOARDS[boardId];
+    if (board) return { width: board.width, height: board.height };
+  }
+
+  if (comp.type === 'ic-universal' || comp.type.startsWith('ic-')) {
+    const icNum = (comp.properties?.icNumber || comp.properties?.partNumber || comp.type.replace('ic-', '') || 'NE555').toUpperCase();
+    const matched = findIcDefinition(icNum);
+    const pinCount = Number(comp.properties?.pinCount) || matched?.pinCount || 8;
+    const { width, height } = getDipDimensions(pinCount);
+    return { width, height };
+  }
+
+  const template = COMPONENT_CATALOG.find((c) => c.type === comp.type);
+  if (template) return { width: template.width, height: template.height };
+  return { width: 80, height: 80 };
 }

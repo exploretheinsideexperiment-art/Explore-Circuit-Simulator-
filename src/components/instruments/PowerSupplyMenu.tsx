@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Zap,
   ChevronDown,
@@ -37,6 +38,7 @@ interface PowerSupplyMenuProps {
   isBenchSupplyOpen?: boolean;
   onStartInteractiveWire?: (compId: string, pinId: string, color: string) => void;
   activeWiringPin?: { compId: string; pinId: string } | null;
+  dropUp?: boolean;
 }
 
 export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
@@ -51,10 +53,38 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
   isBenchSupplyOpen,
   onStartInteractiveWire,
   activeWiringPin,
+  dropUp = true,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'dc' | 'ac'>('dc');
   const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [coords, setCoords] = useState<{ bottom: number; left: number; maxHeight: number } | null>(null);
+
+  // Measure button position when opening so menu pops up right above it
+  useEffect(() => {
+    const updatePosition = () => {
+      if (isOpen && buttonRef.current) {
+        const rect = buttonRef.current.getBoundingClientRect();
+        const bottomDistance = window.innerHeight - rect.top;
+        setCoords({
+          bottom: bottomDistance + 8,
+          left: Math.max(8, Math.min(window.innerWidth - 350, rect.left)),
+          maxHeight: Math.min(540, rect.top - 16),
+        });
+      }
+    };
+
+    if (isOpen) {
+      updatePosition();
+      window.addEventListener('resize', updatePosition);
+      window.addEventListener('scroll', updatePosition, true);
+      return () => {
+        window.removeEventListener('resize', updatePosition);
+        window.removeEventListener('scroll', updatePosition, true);
+      };
+    }
+  }, [isOpen]);
 
   // Pin selector state
   const [activePickerPin, setActivePickerPin] = useState<
@@ -76,7 +106,12 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
   // Close dropdown on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (
+        menuRef.current && 
+        !menuRef.current.contains(e.target as Node) &&
+        buttonRef.current &&
+        !buttonRef.current.contains(e.target as Node)
+      ) {
         setIsOpen(false);
         setActivePickerPin(null);
       }
@@ -307,12 +342,13 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
   });
 
   return (
-    <div ref={menuRef} className="relative z-30">
+    <div className="relative z-30 shrink-0">
       {/* AC/DC Supply Toolbar Button */}
       <button
+        ref={buttonRef}
         id="toolbar-ac-dc-supply-btn"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold shadow-lg transition-all cursor-pointer select-none active:scale-95 ${
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold shadow-lg transition-all cursor-pointer select-none active:scale-95 whitespace-nowrap shrink-0 ${
           isOpen || totalSupplies > 0 || isBenchSupplyOpen
             ? 'bg-gradient-to-r from-cyan-600/90 to-blue-600/90 border-cyan-400/80 text-white shadow-cyan-950/40 ring-2 ring-cyan-500/30'
             : 'bg-[#0e1424]/90 hover:bg-[#151d33] border-slate-700/80 text-slate-200 hover:text-white'
@@ -337,9 +373,19 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
         />
       </button>
 
-      {/* Popover Menu Panel */}
-      {isOpen && (
-        <div className="absolute left-0 mt-2 w-84 bg-[#0c101d] border border-cyan-700/70 rounded-2xl shadow-2xl backdrop-blur-xl p-3 space-y-2.5 z-40 animate-in fade-in zoom-in-95 duration-150 max-h-[88vh] overflow-y-auto font-mono">
+      {/* Popover Menu Panel (Pops UPWARDS into canvas via portal so it is never clipped) */}
+      {isOpen && coords && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            bottom: `${coords.bottom}px`,
+            left: `${coords.left}px`,
+            maxHeight: `${coords.maxHeight}px`,
+            zIndex: 99999,
+          }}
+          className="w-84 max-w-[calc(100vw-24px)] bg-[#0c101d] border border-cyan-700/70 rounded-2xl shadow-2xl backdrop-blur-xl p-3 space-y-2.5 animate-in fade-in zoom-in-95 duration-150 overflow-y-auto font-mono"
+        >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
             <div className="flex items-center gap-2">
@@ -740,6 +786,34 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
                   }}
                   className="w-full accent-cyan-400 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
                 />
+
+                {/* AC Quick Presets */}
+                <div className="grid grid-cols-4 gap-1 pt-0.5">
+                  {[
+                    { label: '12V', val: 12 },
+                    { label: '24V', val: 24 },
+                    { label: '110V', val: 110 },
+                    { label: '220V', val: 220 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.val}
+                      type="button"
+                      onClick={() => {
+                        setAcVoltage(preset.val);
+                        if (canvasAcSupply && onUpdateComponentProperty) {
+                          onUpdateComponentProperty(canvasAcSupply.id, 'voltage', preset.val);
+                        }
+                      }}
+                      className={`py-0.5 rounded text-[8.5px] font-mono font-bold border transition cursor-pointer ${
+                        acVoltage === preset.val
+                          ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Waveform Selector */}
@@ -951,6 +1025,49 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
                     </div>
                   </div>
                 </div>
+
+                {/* 1-Click Power Up Transformer Helper */}
+                {components.some((c) => c.type === 'transformer') && (
+                  <div className="p-2 rounded-xl bg-amber-950/40 border border-amber-600/50 space-y-1.5 mt-2">
+                    <div className="flex items-center justify-between text-[9px] font-bold text-amber-300">
+                      <span>⚡ TRANSFORMER DETECTED:</span>
+                      <span className="text-[8px] text-amber-400/80">Linear Power Supply</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const xform = components.find((c) => c.type === 'transformer');
+                        if (!xform || !onAddWire) return;
+
+                        // Ensure AC supply is set to matching primary voltage (e.g. 220V) and turned ON
+                        const targetPriV = Number(xform.properties?.primaryVoltage) || 220;
+                        setAcVoltage(targetPriV);
+                        setAcPowerOn(true);
+
+                        let supplyId = canvasAcSupply?.id;
+                        if (!supplyId) {
+                          const created = onAddAcSupply(targetPriV, 50, 'sine');
+                          supplyId = created?.id || getOrEnsureSupplyId('ac') || '';
+                        } else if (onUpdateComponentProperty) {
+                          onUpdateComponentProperty(supplyId, 'voltage', targetPriV);
+                          onUpdateComponentProperty(supplyId, 'isOn', true);
+                        }
+
+                        if (supplyId) {
+                          onAddWire(supplyId, 'LIVE', xform.id, 'PRI1', '#f59e0b');
+                          onAddWire(supplyId, 'NEUTRAL', xform.id, 'PRI2', '#06b6d4');
+                          try { soundEngine.playRelayClick(true); } catch (_) {}
+                          setIsOpen(false);
+                        }
+                      }}
+                      className="w-full py-1.5 rounded-lg bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 text-[9.5px] font-black shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                      title="Automatically wire AC Live to PRI1 and Neutral to PRI2 on Transformer"
+                    >
+                      <Zap className="w-3.5 h-3.5 fill-current" />
+                      <span>1-Click Power Transformer (220V AC ➔ PRI)</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1049,7 +1166,8 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
               </div>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

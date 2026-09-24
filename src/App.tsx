@@ -5,7 +5,7 @@ import {
 } from './types';
 import { COMPONENT_CATALOG } from './engine/peripherals/definitions';
 import { SUPPORTED_BOARDS } from './engine/mcu/boards';
-import { evaluateCircuit, PinState } from './engine/circuit';
+import { evaluateCircuit, PinState, ExternalSignalInjection } from './engine/circuit';
 import { VirtualMCU } from './engine/mcu/interpreter';
 import { storageService, BUILT_IN_TEMPLATES } from './services/storage';
 import { validateCppCode } from './components/editor/syntaxParser';
@@ -22,6 +22,7 @@ import { ProjectManagerModal } from './components/modals/ProjectManagerModal';
 import { DigitalMultimeter } from './components/instruments/DigitalMultimeter';
 import { Oscilloscope } from './components/instruments/Oscilloscope';
 import { BenchPowerSupply } from './components/instruments/BenchPowerSupply';
+import { FunctionGenerator, FunctionGeneratorOutputState } from './components/instruments/FunctionGenerator';
 
 export default function App() {
   // Project Info
@@ -55,6 +56,36 @@ void loop() {
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [wireColor, setWireColor] = useState('#06b6d4');
 
+  // Canvas View Controls & Theme (Black / White mode)
+  const [zoom, setZoom] = useState(1.0);
+  const [pan, setPan] = useState({ x: 40, y: 40 });
+  const [showGrid, setShowGrid] = useState(true);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    try {
+      return (localStorage.getItem('ecs_theme') as 'dark' | 'light') || 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
+
+  const handleToggleTheme = () => {
+    setTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      try {
+        localStorage.setItem('ecs_theme', next);
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleZoomIn = () => setZoom((z) => Math.min(2.5, +(z + 0.1).toFixed(2)));
+  const handleZoomOut = () => setZoom((z) => Math.max(0.4, +(z - 0.1).toFixed(2)));
+  const handleResetView = () => {
+    setZoom(1.0);
+    setPan({ x: 40, y: 40 });
+  };
+  const handleToggleGrid = () => setShowGrid((g) => !g);
+
   // Simulation State
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -70,9 +101,15 @@ void loop() {
   const [isProjectManagerOpen, setIsProjectManagerOpen] = useState(false);
   const [isMultimeterOpen, setIsMultimeterOpen] = useState(false);
   const [isOscilloscopeOpen, setIsOscilloscopeOpen] = useState(false);
+  const [isFunctionGeneratorOpen, setIsFunctionGeneratorOpen] = useState(false);
   const [isBenchSupplyOpen, setIsBenchSupplyOpen] = useState(false);
   const [externalWireStart, setExternalWireStart] = useState<{ compId: string; pinId: string; color?: string } | null>(null);
   const [activeWiringPin, setActiveWiringPin] = useState<{ compId: string; pinId: string } | null>(null);
+
+  // Function Generator output state and synchronization with Oscilloscope
+  const [functionGenState, setFunctionGenState] = useState<FunctionGeneratorOutputState | null>(null);
+  const functionGenStateRef = useRef<FunctionGeneratorOutputState | null>(null);
+  const [oscilloscopeCh1Pin, setOscilloscopeCh1Pin] = useState<{ compId: string; pinId: string } | null>(null);
 
   // Virtual MCU instance reference
   const mcuRef = useRef<VirtualMCU | null>(null);
@@ -111,11 +148,108 @@ void loop() {
 
     const currentComps = componentsRef.current;
     const currentWires = wiresRef.current;
-    const result = evaluateCircuit(currentComps, currentWires, mcuGpioOutputs);
+
+    // Collect external signal injections (e.g. from Floating Function Generator Probes)
+    const currentFg = functionGenStateRef.current;
+    const externalInjections: ExternalSignalInjection[] = [];
+
+    if (currentFg) {
+      const vPeak = currentFg.amplitude / 2;
+      const vRms = currentFg.waveform === 'sine' ? vPeak * 0.7071 : vPeak;
+
+      // Always publish Function Generator terminals to pinStates
+      externalInjections.push({
+        compId: '__func_gen__',
+        pinId: 'OUT',
+        voltage: currentFg.isOn ? Math.max(0.1, Number(vRms.toFixed(2))) : 0,
+        isAc: true,
+        frequency: currentFg.frequency,
+        waveform: currentFg.waveform,
+        amplitude: currentFg.amplitude,
+        offset: currentFg.offset,
+        duty: currentFg.duty,
+        isDriven: true,
+        driverType: 'power',
+      });
+
+      externalInjections.push({
+        compId: '__func_gen__',
+        pinId: 'GND',
+        voltage: 0,
+        isDriven: true,
+        driverType: 'ground',
+      });
+
+      if (currentFg.isOn && currentFg.redProbe) {
+        externalInjections.push({
+          compId: currentFg.redProbe.compId,
+          pinId: currentFg.redProbe.pinId,
+          voltage: Math.max(0.1, Number(vRms.toFixed(2))) || 5.0,
+          isAc: true,
+          frequency: currentFg.frequency,
+          waveform: currentFg.waveform,
+          amplitude: currentFg.amplitude,
+          offset: currentFg.offset,
+          duty: currentFg.duty,
+          isDriven: true,
+          driverType: 'power',
+        });
+      }
+
+      if (currentFg.blackProbe) {
+        externalInjections.push({
+          compId: currentFg.blackProbe.compId,
+          pinId: currentFg.blackProbe.pinId,
+          voltage: 0,
+          isDriven: true,
+          driverType: 'ground',
+        });
+      }
+    }
+
+    const result = evaluateCircuit(currentComps, currentWires, mcuGpioOutputs, externalInjections);
     setPinStates(result.pinStates);
     pinStatesRef.current = result.pinStates;
     setComponentUpdates(result.componentUpdates);
     setWarnings(result.warnings);
+  }, []);
+
+  // Handle Function Generator parameter changes in real time
+  const handleFunctionGenOutputChange = useCallback((fgState: FunctionGeneratorOutputState) => {
+    functionGenStateRef.current = fgState;
+    setFunctionGenState(fgState);
+    runCircuitSolver();
+  }, [runCircuitSolver]);
+
+  // Connect Function Generator to Oscilloscope
+  const handleConnectFgToOscilloscope = useCallback((channel: 'CH1' | 'CH2' = 'CH1') => {
+    setIsOscilloscopeOpen(true);
+    if (channel === 'CH1') {
+      setOscilloscopeCh1Pin({ compId: '__func_gen__', pinId: 'OUT' });
+    }
+  }, []);
+
+  // Drop physical function generator device onto the circuit canvas
+  const handleAddFunctionGenerator = useCallback(() => {
+    const currentFg = functionGenStateRef.current;
+    const newComp: CircuitComponent = {
+      id: `func-gen-${Date.now()}`,
+      type: 'function-generator',
+      name: 'DDS Function Generator',
+      x: 300,
+      y: 180,
+      rotation: 0,
+      properties: {
+        waveform: currentFg?.waveform || 'sine',
+        frequency: currentFg?.frequency || 1000,
+        amplitude: currentFg?.amplitude || 5.0,
+        offset: currentFg?.offset || 0.0,
+        duty: currentFg?.duty || 50,
+        isOn: true,
+        label: 'FUNC GEN',
+      },
+    };
+    setComponents((prev) => [...prev, newComp]);
   }, []);
 
   // Initialize MCU engine once
@@ -596,7 +730,9 @@ void loop() {
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#070a12] text-slate-100 overflow-hidden font-sans">
+    <div className={`flex flex-col h-screen w-screen overflow-hidden font-sans transition-colors duration-200 ${
+      theme === 'light' ? 'bg-slate-100 text-slate-900' : 'bg-[#070a12] text-slate-100'
+    }`}>
       {/* Top Navigation Bar */}
       <TopBar
         projectName={projectName}
@@ -619,6 +755,14 @@ void loop() {
         onShowWarnings={() => {}}
         isLibraryOpen={isLibraryOpen}
         onToggleLibrary={() => setIsLibraryOpen(!isLibraryOpen)}
+        zoom={zoom}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onResetView={handleResetView}
+        showGrid={showGrid}
+        onToggleGrid={handleToggleGrid}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
       />
 
       {/* Main Studio Workspace */}
@@ -681,9 +825,22 @@ void loop() {
             onToggleMultimeter={() => setIsMultimeterOpen((v) => !v)}
             isOscilloscopeOpen={isOscilloscopeOpen}
             onToggleOscilloscope={() => setIsOscilloscopeOpen((v) => !v)}
+            isFunctionGeneratorOpen={isFunctionGeneratorOpen}
+            onToggleFunctionGenerator={() => setIsFunctionGeneratorOpen((v) => !v)}
             externalWireStart={externalWireStart}
             onClearExternalWireStart={() => setExternalWireStart(null)}
             onWireStartChange={setActiveWiringPin}
+            zoom={zoom}
+            pan={pan}
+            showGrid={showGrid}
+            theme={theme}
+            onZoomChange={setZoom}
+            onPanChange={setPan}
+            onRotateComponent={handleRotate}
+            onRun={handleRun}
+            onPause={handlePause}
+            onStop={handleStop}
+            isPaused={isPaused}
           />
 
           {/* Bottom Code Editor & Serial Monitor Panel */}
@@ -757,6 +914,18 @@ void loop() {
       />
 
       {/* Floating Instruments (Draggable across the entire workspace) */}
+      <FunctionGenerator
+        isOpen={isFunctionGeneratorOpen}
+        onClose={() => setIsFunctionGeneratorOpen(false)}
+        components={components}
+        wires={wires}
+        isRunning={isRunning}
+        onOutputChange={handleFunctionGenOutputChange}
+        onAddCanvasGenerator={handleAddFunctionGenerator}
+        onOpenOscilloscope={handleConnectFgToOscilloscope}
+        isOscilloscopeConnected={oscilloscopeCh1Pin?.compId === '__func_gen__'}
+      />
+
       <DigitalMultimeter
         isOpen={isMultimeterOpen}
         onClose={() => setIsMultimeterOpen(false)}
@@ -773,6 +942,10 @@ void loop() {
         wires={wires}
         pinStates={pinStates}
         isRunning={isRunning}
+        functionGenState={functionGenState}
+        forcedCh1Pin={oscilloscopeCh1Pin}
+        onCh1PinChange={setOscilloscopeCh1Pin}
+        onOpenFunctionGenerator={() => setIsFunctionGeneratorOpen(true)}
       />
 
       {isBenchSupplyOpen && (

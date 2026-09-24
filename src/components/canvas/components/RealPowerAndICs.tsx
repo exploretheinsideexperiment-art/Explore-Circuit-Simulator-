@@ -283,7 +283,7 @@ export const RealAdjustableAcSupply: React.FC<CompProps> = ({ comp, renderPin, o
 
   const handleWaveformToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const cycle = ['sine', 'square', 'triangle'] as const;
+    const cycle = ['sine', 'square', 'triangle', 'sawtooth'] as const;
     const nextIdx = (cycle.indexOf(waveform as any) + 1) % cycle.length;
     onUpdateProperty?.(comp.id, 'waveform', cycle[nextIdx]);
   };
@@ -353,9 +353,9 @@ export const RealAdjustableAcSupply: React.FC<CompProps> = ({ comp, renderPin, o
         <button
           onClick={handleWaveformToggle}
           className="px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-700 text-cyan-300 font-bold uppercase cursor-pointer hover:bg-cyan-900 transition flex items-center gap-0.5"
-          title="Cycle Waveform (Sine, Square, Triangle)"
+          title="Cycle Waveform (Sine, Square, Triangle, Sawtooth)"
         >
-          <span>{waveform === 'sine' ? '~ SINE' : waveform === 'square' ? '⎍ SQ' : '/\\ TRI'}</span>
+          <span>{waveform === 'sine' ? '~ SINE' : waveform === 'square' ? '⎍ SQ' : waveform === 'triangle' ? '/\\ TRI' : '⩘ SAW'}</span>
         </button>
 
         {/* Quick voltage presets */}
@@ -392,6 +392,108 @@ export const RealAdjustableAcSupply: React.FC<CompProps> = ({ comp, renderPin, o
       </div>
 
       {/* Interactive clickable Pins for Wires (direct children of relative root container) */}
+      {pwrPins.map((pin) =>
+        renderPin(pin, {
+          left: pin.x - 7,
+          top: pin.y - 7,
+          labelPos: 'none',
+        })
+      )}
+    </div>
+  );
+};
+
+// --- 6. DDS FUNCTION / ARBITRARY WAVEFORM GENERATOR ---
+export const RealFunctionGenerator: React.FC<CompProps> = ({ comp, renderPin, onUpdateProperty }) => {
+  const props = comp.properties || {};
+  const amplitude = Number(props.amplitude ?? 5.0);
+  const frequency = Number(props.frequency ?? 1000);
+  const waveform = props.waveform || 'sine';
+  const isOn = props.isOn !== false;
+  const pwrPins = COMPONENT_CATALOG.find((c) => c.type === comp.type)?.pins || [];
+
+  const setWaveform = (w: 'sine' | 'square' | 'triangle' | 'sawtooth', e: React.MouseEvent) => {
+    e.stopPropagation();
+    onUpdateProperty?.(comp.id, 'waveform', w);
+  };
+
+  const togglePower = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onUpdateProperty?.(comp.id, 'isOn', !isOn);
+  };
+
+  return (
+    <div className="relative w-[140px] h-[100px] bg-[#0c1220] rounded-lg border-2 border-emerald-600 shadow-2xl p-2 select-none font-mono flex flex-col justify-between text-white ring-1 ring-emerald-900/40">
+      {/* Top Header: Brand & Output Status */}
+      <div className="flex items-center justify-between border-b border-emerald-900/50 pb-1">
+        <div className="flex items-center gap-1">
+          <span className="text-[7.5px] font-black tracking-wider text-emerald-400">FUNC GEN</span>
+          <span className="text-[6.5px] text-emerald-200/70 font-bold">DDS 100kHz</span>
+        </div>
+        <button
+          onClick={togglePower}
+          className={`px-1.5 py-0.5 rounded text-[7px] font-bold tracking-wider cursor-pointer transition ${
+            isOn
+              ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs'
+              : 'bg-slate-800 text-slate-400'
+          }`}
+          title="Toggle Generator Output ON / OFF"
+        >
+          {isOn ? 'OUT ON' : 'OUT OFF'}
+        </button>
+      </div>
+
+      {/* Mini OLED Waveform Display */}
+      <div className="bg-[#030914] border border-emerald-900/80 rounded px-1.5 py-0.5 flex items-center justify-between shadow-inner">
+        <div>
+          <span className="text-[6px] text-emerald-400/80 block uppercase tracking-tighter">FREQ</span>
+          <span className={`text-[11px] font-black tracking-wider ${isOn ? 'text-emerald-300' : 'text-emerald-950'}`}>
+            {frequency >= 1000 ? `${(frequency / 1000).toFixed(1)}k` : frequency} <span className="text-[7px] text-emerald-400">Hz</span>
+          </span>
+        </div>
+        <div className="text-right">
+          <span className="text-[6px] text-emerald-400/80 block uppercase tracking-tighter">AMPLITUDE</span>
+          <span className={`text-[11px] font-black tracking-wider ${isOn ? 'text-emerald-300' : 'text-emerald-950'}`}>
+            {isOn ? amplitude.toFixed(1) : '0.0'} <span className="text-[7px] text-emerald-400">Vpp</span>
+          </span>
+        </div>
+      </div>
+
+      {/* 4 Dedicated Waveform Select Buttons: Sine, Square, Triangle, Sawtooth */}
+      <div className="grid grid-cols-4 gap-0.5 text-[6.5px]">
+        {(['sine', 'square', 'triangle', 'sawtooth'] as const).map((w) => (
+          <button
+            key={w}
+            onClick={(e) => setWaveform(w, e)}
+            className={`py-0.5 rounded font-bold transition cursor-pointer flex items-center justify-center ${
+              waveform === w
+                ? 'bg-emerald-500 text-slate-950 ring-1 ring-emerald-400'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+            }`}
+            title={`Select ${w.toUpperCase()} wave`}
+          >
+            {w === 'sine' ? '~ SIN' : w === 'square' ? '⎍ SQ' : w === 'triangle' ? '⋀ TRI' : '⩘ SAW'}
+          </button>
+        ))}
+      </div>
+
+      {/* Output BNC / Banana Terminals: SIG (+) and GND (-) */}
+      <div className="w-full h-6 mt-0.5 flex items-center justify-around bg-slate-950/80 rounded border border-slate-800 px-4 pointer-events-none">
+        <div className="flex items-center gap-1">
+          <div className="w-3.5 h-3.5 rounded-full border-2 border-red-500 bg-red-950 flex items-center justify-center shadow-[0_0_6px_rgba(239,68,68,0.5)]">
+            <div className="w-1 h-1 rounded-full bg-red-400" />
+          </div>
+          <span className="text-[7.5px] font-black text-red-400">OUT (+)</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-[7.5px] font-black text-zinc-400">GND (-)</span>
+          <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-500 bg-zinc-950 flex items-center justify-center shadow-xs">
+            <div className="w-1 h-1 rounded-full bg-zinc-400" />
+          </div>
+        </div>
+      </div>
+
+      {/* Interactive clickable Pins for Wires */}
       {pwrPins.map((pin) =>
         renderPin(pin, {
           left: pin.x - 7,
