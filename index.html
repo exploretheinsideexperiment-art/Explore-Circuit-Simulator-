@@ -16,22 +16,19 @@
     <meta name="apple-mobile-web-app-title" content="ECSv1.0" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-  </head>
-  <body class="bg-[#090d16] text-slate-100 antialiased overflow-hidden select-none">
-    <div id="root"></div>
     <script>
       (function() {
-        var isDevEnv = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.includes('.run.app');
-        if (!isDevEnv && !location.pathname.includes('/docs/')) {
-          window.addEventListener('error', function(e) {
-            if (e && e.filename && (e.filename.endsWith('.tsx') || e.filename.endsWith('.ts'))) {
-              var target = location.pathname.endsWith('/') ? location.pathname + 'docs/' : location.pathname + '/docs/';
-              location.replace(target + location.search + location.hash);
-            }
-          }, true);
+        var h = window.location.hostname;
+        var p = window.location.pathname;
+        if (h.endsWith('github.io') && !p.includes('/docs')) {
+          var target = p.endsWith('/') ? p + 'docs/' : p + '/docs/';
+          window.location.replace(target + window.location.search + window.location.hash);
         }
       })();
     </script>
+  </head>
+  <body class="bg-[#090d16] text-slate-100 antialiased overflow-hidden select-none">
+    <div id="root"></div>
     <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>
