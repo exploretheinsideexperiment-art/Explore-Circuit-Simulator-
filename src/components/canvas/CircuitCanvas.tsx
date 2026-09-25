@@ -321,7 +321,6 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
         onAddWire(snap.sourceCompId, snap.sourcePinId, snap.targetCompId, snap.targetPinId, chosenColor, []);
         try {
-          soundEngine.playTone(1350, 0.09);
           soundEngine.playRelayClick(true);
         } catch (_) {}
         setConnectionToast(`⚡ Terminals Auto-Connected: ${snap.sourcePinName} ⟷ ${snap.targetPinName}!`);
@@ -1094,12 +1093,24 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     return cursorPos;
   }, [wireStart, hoveredPin, components, cursorPos, getPinAbsolutePos]);
 
-  // Natural catenary sagging curve for realistic 2-point wire rendering
+  // Straight or natural wire rendering
   const getWirePath = useCallback((x1: number, y1: number, x2: number, y2: number) => {
     const dx = x2 - x1;
     const dy = y2 - y1;
     const dist = Math.hypot(dx, dy);
-    const sag = Math.min(80, Math.max(25, dist * 0.2));
+
+    // When components or terminals are placed in front of each other (horizontally or vertically aligned),
+    // or placed near each other facing each other, render completely straight wire!
+    const isHorizontallyAligned = Math.abs(dy) <= 24;
+    const isVerticallyAligned = Math.abs(dx) <= 24;
+    const isFacing = dist <= 180;
+
+    if (isHorizontallyAligned || isVerticallyAligned || isFacing) {
+      return `M ${x1} ${y1} L ${x2} ${y2}`;
+    }
+
+    // For wider diagonal connections without intermediate points, use subtle smooth arc
+    const sag = Math.min(50, Math.max(12, dist * 0.12));
     const cp1x = x1 + dx * 0.25;
     const cp1y = y1 + dy * 0.25 + sag;
     const cp2x = x1 + dx * 0.75;
@@ -1419,6 +1430,23 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                 strokeLinecap="round"
                 filter={isSelected || isHigh ? 'url(#wire-glow)' : undefined}
                 className="transition-all"
+              />
+              {/* Terminal contact pin eyelets locked strictly inside component solder circles */}
+              <circle
+                cx={pos1.x}
+                cy={pos1.y}
+                r={3}
+                fill={isSelected ? '#38bdf8' : wire.color || '#06b6d4'}
+                stroke="#090d16"
+                strokeWidth={1.2}
+              />
+              <circle
+                cx={pos2.x}
+                cy={pos2.y}
+                r={3}
+                fill={isSelected ? '#38bdf8' : wire.color || '#06b6d4'}
+                stroke="#090d16"
+                strokeWidth={1.2}
               />
               {/* Live Signal Animation during active simulation */}
               {isRunning && isHigh && (
@@ -2008,8 +2036,8 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
           }
         }}
       >
-        {/* Invisible expanded hit target (makes clicking & hovering over pins much easier) */}
-        <div className="absolute -inset-2 rounded-full pointer-events-auto" />
+        {/* Hit target strictly within the terminal circle */}
+        <div className="absolute inset-0 rounded-full pointer-events-auto" />
 
         {/* Realistic ENIG Gold Annular Solder Pad with Drill Through-Hole */}
         <div
@@ -2432,7 +2460,7 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
         <span className="text-[7.5px] font-black text-cyan-300 tracking-wider truncate">
           {props.label || comp.name}
         </span>
-        <div className="w-1.5 h-1.5 rounded-xs bg-emerald-400 shadow-[0_0_4px_#34d399]" />
+        <div className={`w-1.5 h-1.5 rounded-xs transition-all ${props.hasPower ? 'bg-emerald-400 shadow-[0_0_4px_#34d399]' : 'bg-slate-800'}`} />
       </div>
 
       {/* Central IC / Sensor Element */}

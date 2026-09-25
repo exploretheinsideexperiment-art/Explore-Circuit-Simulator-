@@ -365,6 +365,7 @@ export const RealPiezoBuzzer: React.FC<CompProps> = ({ comp, renderPin }) => {
 // --- 8. 1-CHANNEL 5V RELAY MODULE ---
 export const RealRelayModule: React.FC<CompProps> = ({ comp, renderPin }) => {
   const props = comp.properties || {};
+  const hasPower = Boolean(props.hasPower);
   const isOpen = props.isOpen !== false;
   const relayPins = COMPONENT_CATALOG.find((c) => c.type === 'module-relay-1ch')?.pins || [];
 
@@ -373,12 +374,12 @@ export const RealRelayModule: React.FC<CompProps> = ({ comp, renderPin }) => {
       {/* Left Input Section: 3-pin Header, Optocoupler, Status LEDs */}
       <div className="w-8 h-full flex flex-col justify-between items-center py-1">
         <div className="flex flex-col gap-1 items-center">
-          {/* Green Power LED */}
-          <div className="w-2 h-2 rounded-xs bg-emerald-500 shadow-[0_0_4px_#10b981]" />
+          {/* Green Power LED - only lights up when module has real power supply */}
+          <div className={`w-2 h-2 rounded-xs transition-all ${hasPower ? 'bg-emerald-500 shadow-[0_0_4px_#10b981]' : 'bg-slate-800 border border-slate-700'}`} />
           {/* Red Relay Active LED */}
           <div
             className={`w-2 h-2 rounded-xs transition-all ${
-              !isOpen ? 'bg-rose-500 shadow-[0_0_8px_#f43f5e]' : 'bg-rose-950'
+              hasPower && !isOpen ? 'bg-rose-500 shadow-[0_0_8px_#f43f5e]' : 'bg-rose-950/60'
             }`}
           />
         </div>

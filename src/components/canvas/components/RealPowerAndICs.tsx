@@ -14,12 +14,13 @@ export const RealPowerSupply: React.FC<CompProps> = ({ comp, renderPin }) => {
   const is3v3 = comp.type.includes('3v3');
   const voltage = is3v3 ? '3.3V' : '5.0V';
   const pwrPins = COMPONENT_CATALOG.find((c) => c.type === comp.type)?.pins || [];
+  const isOn = props.isOn !== false;
 
   return (
     <div className="relative w-18 h-15 bg-[#1e293b] rounded-md border-2 border-slate-700 shadow-xl p-1.5 select-none font-mono flex flex-col justify-between items-center">
       {/* Power Module Header & Indicator */}
       <div className="w-full flex justify-between items-center px-1">
-        <div className="w-2 h-2 rounded-xs bg-emerald-400 shadow-[0_0_6px_#34d399]" />
+        <div className={`w-2 h-2 rounded-xs transition-all ${isOn ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]' : 'bg-slate-700'}`} />
         <span className="text-[6.5px] font-black text-white">DC REG</span>
       </div>
 

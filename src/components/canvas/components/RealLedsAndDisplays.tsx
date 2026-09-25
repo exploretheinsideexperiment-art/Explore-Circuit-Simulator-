@@ -15,14 +15,19 @@ export const RealLed: React.FC<CompProps> = ({ comp, pinStates, renderPin }) => 
   const customBrightness = props.brightness;
   
   // Calculate voltage from pinStates or properties
-  const anodeV = pinStates[`${comp.id}:ANODE`]?.voltage ?? 0;
-  const cathodeV = pinStates[`${comp.id}:CATHODE`]?.voltage ?? 0;
+  const anodePin = pinStates[`${comp.id}:ANODE`];
+  const cathodePin = pinStates[`${comp.id}:CATHODE`];
+  const hasSupply = anodePin && anodePin.signalLevel !== 'FLOATING' && anodePin.voltage >= 1.6;
+  const hasGround = cathodePin && (cathodePin.signalLevel === 'POWER_GND' || cathodePin.signalLevel === 'LOW' || (cathodePin.signalLevel !== 'FLOATING' && (cathodePin.voltage || 0) < (anodePin?.voltage || 0)));
+
+  const anodeV = hasSupply ? (anodePin.voltage ?? 0) : 0;
+  const cathodeV = hasGround ? (cathodePin.voltage ?? 0) : 0;
   const deltaV = Math.max(0, anodeV - cathodeV);
 
-  // Brightness: if simulator drives it or manual property
-  const brightness = customBrightness !== undefined && customBrightness > 0 
-    ? customBrightness 
-    : deltaV >= 1.5 ? Math.min(1, (deltaV - 1.2) / 1.5) : 0;
+  // Brightness: strictly 0 if no supply or ground return
+  const brightness = (hasSupply && hasGround && deltaV >= 1.5)
+    ? (customBrightness !== undefined ? customBrightness : Math.min(1, (deltaV - 1.2) / 1.5))
+    : 0;
 
   const colorPalettes: Record<string, { body: string; lit: string; glow: string; core: string }> = {
     red: { body: '#7f1d1d', lit: '#ef4444', glow: 'rgba(239,68,68,0.7)', core: '#fca5a5' },
@@ -117,9 +122,17 @@ export const RealRgbLed: React.FC<CompProps> = ({ comp, pinStates, renderPin }) 
   const props = comp.properties || {};
   const rgbPins = COMPONENT_CATALOG.find((c) => c.type === 'rgb-led')?.pins || [];
 
-  const rV = Math.max(0, (pinStates[`${comp.id}:RED`]?.voltage ?? props.r ?? 0));
-  const gV = Math.max(0, (pinStates[`${comp.id}:GREEN`]?.voltage ?? props.g ?? 0));
-  const bV = Math.max(0, (pinStates[`${comp.id}:BLUE`]?.voltage ?? props.b ?? 0));
+  const cathodePin = pinStates[`${comp.id}:CATHODE`];
+  const hasCathodeGnd = cathodePin && (cathodePin.signalLevel === 'POWER_GND' || cathodePin.signalLevel === 'LOW');
+  const vCathode = hasCathodeGnd ? (cathodePin.voltage || 0) : 0;
+
+  const pR = pinStates[`${comp.id}:RED`];
+  const pG = pinStates[`${comp.id}:GREEN`];
+  const pB = pinStates[`${comp.id}:BLUE`];
+
+  const rV = (hasCathodeGnd && pR && pR.signalLevel !== 'FLOATING') ? Math.max(0, pR.voltage - vCathode) : (hasCathodeGnd && props.r ? Number(props.r) / 255 * 3.3 : 0);
+  const gV = (hasCathodeGnd && pG && pG.signalLevel !== 'FLOATING') ? Math.max(0, pG.voltage - vCathode) : (hasCathodeGnd && props.g ? Number(props.g) / 255 * 3.3 : 0);
+  const bV = (hasCathodeGnd && pB && pB.signalLevel !== 'FLOATING') ? Math.max(0, pB.voltage - vCathode) : (hasCathodeGnd && props.b ? Number(props.b) / 255 * 3.3 : 0);
 
   const isLit = rV > 0.5 || gV > 0.5 || bV > 0.5;
   const redAmt = Math.min(255, Math.round((rV / 3.3) * 255));

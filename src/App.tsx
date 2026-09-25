@@ -6,6 +6,7 @@ import {
 import { COMPONENT_CATALOG } from './engine/peripherals/definitions';
 import { SUPPORTED_BOARDS } from './engine/mcu/boards';
 import { evaluateCircuit, PinState, ExternalSignalInjection } from './engine/circuit';
+import { soundEngine } from './engine/audio';
 import { VirtualMCU } from './engine/mcu/interpreter';
 import { storageService, BUILT_IN_TEMPLATES } from './services/storage';
 import { validateCppCode } from './components/editor/syntaxParser';
@@ -114,10 +115,17 @@ void loop() {
   // Virtual MCU instance reference
   const mcuRef = useRef<VirtualMCU | null>(null);
 
-  // Keep references to components, wires, and pinStates for real-time solver sync
+  // Keep references to components, wires, pinStates, and running status for real-time solver sync
   const componentsRef = useRef<CircuitComponent[]>(components);
   const wiresRef = useRef<Wire[]>(wires);
   const pinStatesRef = useRef<Record<string, PinState>>({});
+  const isRunningRef = useRef<boolean>(isRunning);
+  const isPausedRef = useRef<boolean>(isPaused);
+
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+    isPausedRef.current = isPaused;
+  }, [isRunning, isPaused]);
 
   useEffect(() => {
     componentsRef.current = components;
@@ -133,10 +141,11 @@ void loop() {
 
   // Circuit Solver calculation
   const runCircuitSolver = useCallback(() => {
+    const isSimulating = isRunningRef.current && !isPausedRef.current;
     const mcu = mcuRef.current;
     const mcuGpioOutputs: Record<string, { mode: string; value: boolean; pwmDuty: number }> = {};
 
-    if (mcu) {
+    if (mcu && isSimulating) {
       for (const [pin, mode] of Object.entries(mcu.gpioModes)) {
         mcuGpioOutputs[pin] = {
           mode,
@@ -153,7 +162,7 @@ void loop() {
     const currentFg = functionGenStateRef.current;
     const externalInjections: ExternalSignalInjection[] = [];
 
-    if (currentFg) {
+    if (currentFg && isSimulating) {
       const vPeak = currentFg.amplitude / 2;
       const vRms = currentFg.waveform === 'sine' ? vPeak * 0.7071 : vPeak;
 
@@ -207,7 +216,7 @@ void loop() {
       }
     }
 
-    const result = evaluateCircuit(currentComps, currentWires, mcuGpioOutputs, externalInjections);
+    const result = evaluateCircuit(currentComps, currentWires, mcuGpioOutputs, externalInjections, isSimulating);
     setPinStates(result.pinStates);
     pinStatesRef.current = result.pinStates;
     setComponentUpdates(result.componentUpdates);
@@ -312,31 +321,57 @@ void loop() {
 
   // Simulation controls
   const handleRun = () => {
-    if (!mcuRef.current) return;
-    mcuRef.current.loadProgram(code, language);
-    mcuRef.current.start();
+    if (mcuRef.current) {
+      mcuRef.current.loadProgram(code, language);
+      mcuRef.current.start();
+    }
+    isRunningRef.current = true;
+    isPausedRef.current = false;
     setIsRunning(true);
     setIsPaused(false);
     runCircuitSolver();
   };
 
   const handlePause = () => {
-    if (!mcuRef.current) return;
-    mcuRef.current.pause();
-    setIsPaused((p) => !p);
+    if (mcuRef.current) {
+      mcuRef.current.pause();
+    }
+    setIsPaused((p) => {
+      const next = !p;
+      isPausedRef.current = next;
+      if (next) {
+        try {
+          soundEngine.stopTone();
+        } catch (_) {}
+      }
+      return next;
+    });
+    runCircuitSolver();
   };
 
   const handleStop = () => {
-    if (!mcuRef.current) return;
-    mcuRef.current.stop();
+    if (mcuRef.current) {
+      mcuRef.current.stop();
+    }
+    try {
+      soundEngine.stopTone();
+    } catch (_) {}
+    isRunningRef.current = false;
+    isPausedRef.current = false;
     setIsRunning(false);
     setIsPaused(false);
     runCircuitSolver();
   };
 
   const handleReset = () => {
-    if (!mcuRef.current) return;
-    mcuRef.current.reset();
+    if (mcuRef.current) {
+      mcuRef.current.reset();
+    }
+    try {
+      soundEngine.stopTone();
+    } catch (_) {}
+    isRunningRef.current = true;
+    isPausedRef.current = false;
     setIsRunning(true);
     setIsPaused(false);
     runCircuitSolver();

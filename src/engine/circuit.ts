@@ -47,13 +47,78 @@ export function evaluateCircuit(
   components: CircuitComponent[],
   wires: Wire[],
   mcuGpioOutputs: Record<string, { mode: string; value: boolean; pwmDuty: number }>,
-  externalInjections?: ExternalSignalInjection[]
+  externalInjections?: ExternalSignalInjection[],
+  isSimulating: boolean = true
 ): CircuitEvaluationResult {
   const pinStates: Record<string, PinState> = {};
   const warnings: ElectricalWarning[] = [];
   const componentUpdates: Record<string, Record<string, any>> = {};
 
   const makePinKey = (compId: string, pinId: string) => `${compId}:${pinId}`;
+
+  // Circuit Standby / Design Mode: If simulation is not started, keep everything completely OFF
+  if (!isSimulating) {
+    try {
+      soundEngine.stopTone();
+    } catch (_) {}
+
+    for (const comp of components) {
+      let pins: Array<{ id: string; type: string; voltage?: number }> = [];
+
+      if (comp.type.startsWith('mcu-')) {
+        const boardId = comp.properties?.boardId || 'esp32-devkit-v1';
+        const board = SUPPORTED_BOARDS[boardId];
+        if (board) pins = board.pins;
+      } else {
+        const template = COMPONENT_CATALOG.find((c) => c.type === comp.type);
+        if (template) pins = template.pins;
+      }
+
+      for (const p of pins) {
+        const key = makePinKey(comp.id, p.id);
+        pinStates[key] = {
+          compId: comp.id,
+          pinId: p.id,
+          voltage: 0,
+          isDriven: false,
+          driverType: 'passive',
+          signalLevel: 'FLOATING',
+          isAc: false,
+        };
+      }
+
+      const updates: Record<string, any> = {};
+      if (comp.type === 'led') {
+        updates.brightness = 0;
+      } else if (comp.type === 'rgb-led') {
+        updates.r = 0;
+        updates.g = 0;
+        updates.b = 0;
+      } else if (comp.type === 'buzzer-piezo') {
+        updates.isBeeping = false;
+      } else if (comp.type === 'module-relay-1ch') {
+        updates.activeLed = false;
+        updates.isOpen = true;
+      } else if (comp.type === 'motor-dc') {
+        updates.rpm = 0;
+      } else if (comp.type === 'motor-stepper') {
+        updates.step = 0;
+      } else if (comp.type.startsWith('display-')) {
+        updates.active = false;
+      } else if (comp.type === 'sensor-hcsr04') {
+        updates.triggerLed = false;
+      } else if (comp.type === 'ic-555') {
+        updates.outState = false;
+      }
+      componentUpdates[comp.id] = updates;
+    }
+
+    return {
+      pinStates,
+      warnings: [],
+      componentUpdates,
+    };
+  }
 
   // 1. Initialize all pins
   for (const comp of components) {
@@ -694,164 +759,228 @@ export function evaluateCircuit(
 
       // 1. NE555 Timer Simulation
       if (icKey.includes('555')) {
-        const vcc = getPinV('VCC', 'PIN_8');
-        const gnd = getPinV('GND', 'PIN_1');
-        const trig = getPinV('TRIG', 'PIN_2');
-        const thres = getPinV('THRES', 'PIN_6');
-        const resetKey = makePinKey(comp.id, 'RESET');
-        const pin4Key = makePinKey(comp.id, 'PIN_4');
-        const reset = (pinStates[resetKey]?.isDriven || pinStates[pin4Key]?.isDriven)
-          ? getPinV('RESET', 'PIN_4')
-          : vcc;
+        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_8')];
+        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_1')];
+        const has555Power = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 4.0 &&
+                            pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
 
-        if (vcc - gnd >= 4.0) {
-          const vUpper = gnd + (2 / 3) * (vcc - gnd);
-          const vLower = gnd + (1 / 3) * (vcc - gnd);
+        if (has555Power) {
+          const vcc = pVcc.voltage;
+          const gnd = pGnd.voltage || 0;
+          const trig = getPinV('TRIG', 'PIN_2');
+          const thres = getPinV('THRES', 'PIN_6');
+          const resetKey = makePinKey(comp.id, 'RESET');
+          const pin4Key = makePinKey(comp.id, 'PIN_4');
+          const reset = (pinStates[resetKey]?.isDriven || pinStates[pin4Key]?.isDriven)
+            ? getPinV('RESET', 'PIN_4')
+            : vcc;
 
-          // Check if connected in astable oscillation mode (TRIG tied to THRES)
-          const trigKey = makePinKey(comp.id, 'TRIG');
-          const thresKey = makePinKey(comp.id, 'THRES');
-          const isAstable = adj[trigKey]?.includes(thresKey) || adj[thresKey]?.includes(trigKey);
+          if (vcc - gnd >= 4.0) {
+            const vUpper = gnd + (2 / 3) * (vcc - gnd);
+            const vLower = gnd + (1 / 3) * (vcc - gnd);
 
-          let outV = 0;
-          let isDischOn = false;
+            // Check if connected in astable oscillation mode (TRIG tied to THRES)
+            const trigKey = makePinKey(comp.id, 'TRIG');
+            const thresKey = makePinKey(comp.id, 'THRES');
+            const isAstable = adj[trigKey]?.includes(thresKey) || adj[thresKey]?.includes(trigKey);
 
-          if (reset < gnd + 0.7) {
-            outV = gnd;
-            isDischOn = true;
-          } else if (isAstable) {
-            // Self-oscillating astable multivibrator mode
-            const now = Date.now();
-            const period = 500; // ms
-            const isHighPhase = (now % period) < period / 2;
-            outV = isHighPhase ? vcc - 1.3 : gnd;
-            isDischOn = !isHighPhase;
-          } else if (trig < vLower) {
-            outV = vcc - 1.3;
-            isDischOn = false;
-          } else if (thres > vUpper) {
-            outV = gnd;
-            isDischOn = true;
-          } else {
-            outV = comp.runtimeState?.outVoltage ?? (vcc - 1.3);
-            isDischOn = outV < gnd + 1.0;
-          }
+            let outV = 0;
+            let isDischOn = false;
 
-          drivePin('OUT', outV, outV > gnd + 2.0);
-          drivePin('PIN_3', outV, outV > gnd + 2.0);
+            if (reset < gnd + 0.7) {
+              outV = gnd;
+              isDischOn = true;
+            } else if (isAstable) {
+              // Self-oscillating astable multivibrator mode
+              const now = Date.now();
+              const period = 500; // ms
+              const isHighPhase = (now % period) < period / 2;
+              outV = isHighPhase ? vcc - 1.3 : gnd;
+              isDischOn = !isHighPhase;
+            } else if (trig < vLower) {
+              outV = vcc - 1.3;
+              isDischOn = false;
+            } else if (thres > vUpper) {
+              outV = gnd;
+              isDischOn = true;
+            } else {
+              outV = comp.runtimeState?.outVoltage ?? (vcc - 1.3);
+              isDischOn = outV < gnd + 1.0;
+            }
 
-          if (isDischOn) {
-            addEdge(makePinKey(comp.id, 'DISCH'), makePinKey(comp.id, 'GND'));
-            addEdge(makePinKey(comp.id, 'PIN_7'), makePinKey(comp.id, 'PIN_1'));
-            activeConductionAdded = true;
+            drivePin('OUT', outV, outV > gnd + 2.0);
+            drivePin('PIN_3', outV, outV > gnd + 2.0);
+
+            if (isDischOn) {
+              addEdge(makePinKey(comp.id, 'DISCH'), makePinKey(comp.id, 'GND'));
+              addEdge(makePinKey(comp.id, 'PIN_7'), makePinKey(comp.id, 'PIN_1'));
+              activeConductionAdded = true;
+            }
           }
         }
       }
 
       // 2. LM741 Single Operational Amplifier
       else if (icKey.includes('741')) {
-        const vPos = getPinV('V_POS', 'VCC', 'PIN_7');
-        const vNeg = getPinV('V_NEG', 'GND', 'PIN_4');
-        const inPos = getPinV('IN_POS', 'PIN_3');
-        const inNeg = getPinV('IN_NEG', 'PIN_2');
+        const pPos = pinStates[makePinKey(comp.id, 'V_POS')] || pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_7')];
+        const pNeg = pinStates[makePinKey(comp.id, 'V_NEG')] || pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_4')];
+        const has741Power = pPos && pPos.signalLevel !== 'FLOATING' && pPos.voltage >= 3.0 &&
+                            pNeg && (pNeg.signalLevel === 'POWER_GND' || pNeg.signalLevel === 'LOW' || pNeg.signalLevel !== 'FLOATING');
 
-        if (vPos - vNeg >= 3.0) {
-          const diff = inPos - inNeg;
-          const outV = diff > 0.01 ? vPos - 1.2 : diff < -0.01 ? vNeg + 0.5 : (vPos + vNeg) / 2;
-          drivePin('OUT', outV);
-          drivePin('PIN_6', outV);
+        if (has741Power) {
+          const vPos = pPos.voltage;
+          const vNeg = pNeg.voltage || 0;
+          const inPos = getPinV('IN_POS', 'PIN_3');
+          const inNeg = getPinV('IN_NEG', 'PIN_2');
+
+          if (vPos - vNeg >= 3.0) {
+            const diff = inPos - inNeg;
+            const outV = diff > 0.01 ? vPos - 1.2 : diff < -0.01 ? vNeg + 0.5 : (vPos + vNeg) / 2;
+            drivePin('OUT', outV);
+            drivePin('PIN_6', outV);
+          }
         }
       }
 
       // 3. LM358 Dual Operational Amplifier
       else if (icKey.includes('358') || icKey.includes('5532')) {
-        const vcc = getPinV('VCC', 'PIN_8');
-        const gnd = getPinV('GND', 'PIN_4');
-        if (vcc - gnd >= 3.0) {
-          const diff1 = getPinV('IN1_POS', 'PIN_3') - getPinV('IN1_NEG', 'PIN_2');
-          const out1 = diff1 > 0.01 ? vcc - 1.2 : diff1 < -0.01 ? gnd : (vcc + gnd) / 2;
-          drivePin('OUT1', out1);
-          drivePin('1OUT', out1);
-          drivePin('PIN_1', out1);
+        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_8')];
+        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_4')];
+        const has358Power = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 3.0 &&
+                            pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
 
-          const diff2 = getPinV('IN2_POS', 'PIN_5') - getPinV('IN2_NEG', 'PIN_6');
-          const out2 = diff2 > 0.01 ? vcc - 1.2 : diff2 < -0.01 ? gnd : (vcc + gnd) / 2;
-          drivePin('OUT2', out2);
-          drivePin('2OUT', out2);
-          drivePin('PIN_7', out2);
+        if (has358Power) {
+          const vcc = pVcc.voltage;
+          const gnd = pGnd.voltage || 0;
+          if (vcc - gnd >= 3.0) {
+            const diff1 = getPinV('IN1_POS', 'PIN_3') - getPinV('IN1_NEG', 'PIN_2');
+            const out1 = diff1 > 0.01 ? vcc - 1.2 : diff1 < -0.01 ? gnd : (vcc + gnd) / 2;
+            drivePin('OUT1', out1);
+            drivePin('1OUT', out1);
+            drivePin('PIN_1', out1);
+
+            const diff2 = getPinV('IN2_POS', 'PIN_5') - getPinV('IN2_NEG', 'PIN_6');
+            const out2 = diff2 > 0.01 ? vcc - 1.2 : diff2 < -0.01 ? gnd : (vcc + gnd) / 2;
+            drivePin('OUT2', out2);
+            drivePin('2OUT', out2);
+            drivePin('PIN_7', out2);
+          }
         }
       }
 
       // 4. LM386 Audio Power Amplifier
       else if (icKey.includes('386')) {
-        const vs = getPinV('VS', 'VCC', 'PIN_6');
-        const gnd = getPinV('GND', 'PIN_4');
-        if (vs - gnd >= 4.0) {
-          const inSig = getPinV('IN_POS', '+IN', 'PIN_3') - getPinV('IN_NEG', '-IN', 'PIN_2');
-          const mid = (vs + gnd) / 2;
-          const outV = Math.max(gnd, Math.min(vs, mid + inSig * 10));
-          drivePin('OUT', outV);
-          drivePin('PIN_5', outV);
+        const pVs = pinStates[makePinKey(comp.id, 'VS')] || pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_6')];
+        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_4')];
+        const has386Power = pVs && pVs.signalLevel !== 'FLOATING' && pVs.voltage >= 4.0 &&
+                            pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
+
+        if (has386Power) {
+          const vs = pVs.voltage;
+          const gnd = pGnd.voltage || 0;
+          if (vs - gnd >= 4.0) {
+            const inSig = getPinV('IN_POS', '+IN', 'PIN_3') - getPinV('IN_NEG', '-IN', 'PIN_2');
+            const mid = (vs + gnd) / 2;
+            const outV = Math.max(gnd, Math.min(vs, mid + inSig * 10));
+            drivePin('OUT', outV);
+            drivePin('PIN_5', outV);
+          }
         }
       }
 
       // 5. Digital Logic Gates (74HC00, 74HC02, 74HC04, 74HC08, 74HC32, 74HC86)
       else if (icKey.includes('7400') || icKey.includes('74HC00') || icKey.includes('4011')) {
-        const vcc = getPinV('VCC', 'PIN_14') || 5.0;
-        const nand = (a: number, b: number) => !(a >= 1.8 && b >= 1.8);
-        drivePin('1Y', nand(getPinV('1A', 'PIN_1'), getPinV('1B', 'PIN_2')) ? vcc : 0);
-        drivePin('2Y', nand(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
-        drivePin('3Y', nand(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
-        drivePin('4Y', nand(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
+        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
+        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_7')];
+        const hasGatePower = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 2.0 &&
+                             pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
+        const vcc = hasGatePower ? (pVcc.voltage || 5.0) : 0;
+        if (vcc >= 2.0) {
+          const nand = (a: number, b: number) => !(a >= 1.8 && b >= 1.8);
+          drivePin('1Y', nand(getPinV('1A', 'PIN_1'), getPinV('1B', 'PIN_2')) ? vcc : 0);
+          drivePin('2Y', nand(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
+          drivePin('3Y', nand(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
+          drivePin('4Y', nand(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
+        }
       } else if (icKey.includes('7404') || icKey.includes('74HC04') || icKey.includes('4069') || comp.type === 'logic-not') {
-        const vcc = getPinV('VCC', 'PIN_14') || 5.0;
-        drivePin('1Y', getPinV('1A', 'IN', 'PIN_1') < 1.8 ? vcc : 0);
-        drivePin('2Y', getPinV('2A', 'PIN_3') < 1.8 ? vcc : 0);
-        drivePin('3Y', getPinV('3A', 'PIN_5') < 1.8 ? vcc : 0);
-        drivePin('4Y', getPinV('4A', 'PIN_9') < 1.8 ? vcc : 0);
-        drivePin('5Y', getPinV('5A', 'PIN_11') < 1.8 ? vcc : 0);
-        drivePin('6Y', getPinV('6A', 'PIN_13') < 1.8 ? vcc : 0);
-        drivePin('OUT', getPinV('IN', 'PIN_1') < 1.8 ? vcc : 0);
+        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
+        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_7')];
+        const hasGatePower = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 2.0 &&
+                             pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
+        const vcc = hasGatePower ? (pVcc.voltage || 5.0) : 0;
+        if (vcc >= 2.0) {
+          drivePin('1Y', getPinV('1A', 'IN', 'PIN_1') < 1.8 ? vcc : 0);
+          drivePin('2Y', getPinV('2A', 'PIN_3') < 1.8 ? vcc : 0);
+          drivePin('3Y', getPinV('3A', 'PIN_5') < 1.8 ? vcc : 0);
+          drivePin('4Y', getPinV('4A', 'PIN_9') < 1.8 ? vcc : 0);
+          drivePin('5Y', getPinV('5A', 'PIN_11') < 1.8 ? vcc : 0);
+          drivePin('6Y', getPinV('6A', 'PIN_13') < 1.8 ? vcc : 0);
+          drivePin('OUT', getPinV('IN', 'PIN_1') < 1.8 ? vcc : 0);
+        }
       } else if (icKey.includes('7408') || icKey.includes('74HC08') || comp.type === 'logic-and') {
-        const vcc = getPinV('VCC', 'PIN_14') || 5.0;
-        const and = (a: number, b: number) => a >= 1.8 && b >= 1.8;
-        drivePin('1Y', and(getPinV('1A', 'IN_A', 'PIN_1'), getPinV('1B', 'IN_B', 'PIN_2')) ? vcc : 0);
-        drivePin('2Y', and(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
-        drivePin('3Y', and(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
-        drivePin('4Y', and(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
-        drivePin('OUT', and(getPinV('IN_A', '1A', 'PIN_1'), getPinV('IN_B', '1B', 'PIN_2')) ? vcc : 0);
+        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
+        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_7')];
+        const hasGatePower = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 2.0 &&
+                             pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
+        const vcc = hasGatePower ? (pVcc.voltage || 5.0) : 0;
+        if (vcc >= 2.0) {
+          const and = (a: number, b: number) => a >= 1.8 && b >= 1.8;
+          drivePin('1Y', and(getPinV('1A', 'IN_A', 'PIN_1'), getPinV('1B', 'IN_B', 'PIN_2')) ? vcc : 0);
+          drivePin('2Y', and(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
+          drivePin('3Y', and(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
+          drivePin('4Y', and(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
+          drivePin('OUT', and(getPinV('IN_A', '1A', 'PIN_1'), getPinV('IN_B', '1B', 'PIN_2')) ? vcc : 0);
+        }
       } else if (icKey.includes('7432') || icKey.includes('74HC32') || comp.type === 'logic-or') {
-        const vcc = getPinV('VCC', 'PIN_14') || 5.0;
-        const or = (a: number, b: number) => a >= 1.8 || b >= 1.8;
-        drivePin('1Y', or(getPinV('1A', 'IN_A', 'PIN_1'), getPinV('1B', 'IN_B', 'PIN_2')) ? vcc : 0);
-        drivePin('2Y', or(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
-        drivePin('3Y', or(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
-        drivePin('4Y', or(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
-        drivePin('OUT', or(getPinV('IN_A', '1A', 'PIN_1'), getPinV('IN_B', '1B', 'PIN_2')) ? vcc : 0);
+        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
+        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_7')];
+        const hasGatePower = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 2.0 &&
+                             pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
+        const vcc = hasGatePower ? (pVcc.voltage || 5.0) : 0;
+        if (vcc >= 2.0) {
+          const or = (a: number, b: number) => a >= 1.8 || b >= 1.8;
+          drivePin('1Y', or(getPinV('1A', 'IN_A', 'PIN_1'), getPinV('1B', 'IN_B', 'PIN_2')) ? vcc : 0);
+          drivePin('2Y', or(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
+          drivePin('3Y', or(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
+          drivePin('4Y', or(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
+          drivePin('OUT', or(getPinV('IN_A', '1A', 'PIN_1'), getPinV('IN_B', '1B', 'PIN_2')) ? vcc : 0);
+        }
       } else if (icKey.includes('7486') || icKey.includes('74HC86')) {
-        const vcc = getPinV('VCC', 'PIN_14') || 5.0;
-        const xor = (a: number, b: number) => (a >= 1.8) !== (b >= 1.8);
-        drivePin('1Y', xor(getPinV('1A', 'PIN_1'), getPinV('1B', 'PIN_2')) ? vcc : 0);
-        drivePin('2Y', xor(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
-        drivePin('3Y', xor(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
-        drivePin('4Y', xor(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
+        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
+        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_7')];
+        const hasGatePower = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 2.0 &&
+                             pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
+        const vcc = hasGatePower ? (pVcc.voltage || 5.0) : 0;
+        if (vcc >= 2.0) {
+          const xor = (a: number, b: number) => (a >= 1.8) !== (b >= 1.8);
+          drivePin('1Y', xor(getPinV('1A', 'PIN_1'), getPinV('1B', 'PIN_2')) ? vcc : 0);
+          drivePin('2Y', xor(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
+          drivePin('3Y', xor(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
+          drivePin('4Y', xor(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
+        }
       }
 
       // 6. CD4017 Decade Counter
       else if (icKey.includes('4017')) {
-        const vdd = getPinV('VDD', 'VCC', 'PIN_16') || 5.0;
-        const clk = getPinV('CLOCK', 'CLK', 'PIN_14');
-        const rst = getPinV('RESET', 'RST', 'PIN_15');
-        let currentStep = comp.runtimeState?.currentStep || 0;
+        const pVdd = pinStates[makePinKey(comp.id, 'VDD')] || pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_16')];
+        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_8')];
+        const hasCounterPower = pVdd && pVdd.signalLevel !== 'FLOATING' && pVdd.voltage >= 3.0 &&
+                                pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
+        const vdd = hasCounterPower ? (pVdd.voltage || 5.0) : 0;
+        if (vdd >= 3.0) {
+          const clk = getPinV('CLOCK', 'CLK', 'PIN_14');
+          const rst = getPinV('RESET', 'RST', 'PIN_15');
+          let currentStep = comp.runtimeState?.currentStep || 0;
 
-        if (rst >= 2.0) {
-          currentStep = 0;
-        } else if (clk >= 2.0 && !(comp.runtimeState?.lastClk >= 2.0)) {
-          currentStep = (currentStep + 1) % 10;
-        }
+          if (rst >= 2.0) {
+            currentStep = 0;
+          } else if (clk >= 2.0 && !(comp.runtimeState?.lastClk >= 2.0)) {
+            currentStep = (currentStep + 1) % 10;
+          }
 
-        for (let i = 0; i < 10; i++) {
-          drivePin(`Q${i}`, i === currentStep ? vdd : 0);
+          for (let i = 0; i < 10; i++) {
+            drivePin(`Q${i}`, i === currentStep ? vdd : 0);
+          }
         }
       }
 
@@ -909,8 +1038,17 @@ export function evaluateCircuit(
       const vCathode = cathode ? cathode.voltage : 0;
       const deltaV = vAnode - vCathode;
 
-      // Typical forward voltage: 1.8V to 3.3V
-      if (deltaV >= 1.6) {
+      // Closed circuit requirement:
+      // Anode MUST be connected to an active power supply / driven output (NOT floating, voltage >= 1.6V)
+      // Cathode MUST be connected to ground return (POWER_GND, LOW, or non-floating lower potential)
+      const hasAnodeSupply = anode && anode.signalLevel !== 'FLOATING' && vAnode >= 1.6;
+      const hasCathodeReturn = cathode && (
+        cathode.signalLevel === 'POWER_GND' ||
+        cathode.signalLevel === 'LOW' ||
+        (cathode.signalLevel !== 'FLOATING' && vCathode < vAnode)
+      );
+
+      if (hasAnodeSupply && hasCathodeReturn && deltaV >= 1.6) {
         const pwmDuty = anode?.pwmDuty !== undefined ? anode.pwmDuty : 255;
         const brightness = Math.min(1.0, (deltaV / 3.0) * (pwmDuty / 255));
         updates.brightness = brightness;
@@ -918,10 +1056,17 @@ export function evaluateCircuit(
         updates.brightness = 0;
       }
     } else if (comp.type === 'rgb-led') {
-      const vCathode = pinStates[makePinKey(comp.id, 'CATHODE')]?.voltage || 0;
-      const vR = (pinStates[makePinKey(comp.id, 'RED')]?.voltage || 0) - vCathode;
-      const vG = (pinStates[makePinKey(comp.id, 'GREEN')]?.voltage || 0) - vCathode;
-      const vB = (pinStates[makePinKey(comp.id, 'BLUE')]?.voltage || 0) - vCathode;
+      const cathode = pinStates[makePinKey(comp.id, 'CATHODE')];
+      const hasCathodeGnd = cathode && (cathode.signalLevel === 'POWER_GND' || cathode.signalLevel === 'LOW');
+      const vCathode = hasCathodeGnd ? cathode.voltage : 0;
+
+      const pRed = pinStates[makePinKey(comp.id, 'RED')];
+      const pGreen = pinStates[makePinKey(comp.id, 'GREEN')];
+      const pBlue = pinStates[makePinKey(comp.id, 'BLUE')];
+
+      const vR = (hasCathodeGnd && pRed && pRed.signalLevel !== 'FLOATING') ? pRed.voltage - vCathode : 0;
+      const vG = (hasCathodeGnd && pGreen && pGreen.signalLevel !== 'FLOATING') ? pGreen.voltage - vCathode : 0;
+      const vB = (hasCathodeGnd && pBlue && pBlue.signalLevel !== 'FLOATING') ? pBlue.voltage - vCathode : 0;
 
       updates.r = vR >= 1.6 ? 255 : 0;
       updates.g = vG >= 1.6 ? 255 : 0;
@@ -929,9 +1074,15 @@ export function evaluateCircuit(
     } else if (comp.type === 'buzzer-piezo') {
       const pos = pinStates[makePinKey(comp.id, 'POS')];
       const neg = pinStates[makePinKey(comp.id, 'NEG')];
+      const hasPosSupply = pos && pos.signalLevel !== 'FLOATING' && (pos.voltage || 0) >= 2.0;
+      const hasNegReturn = neg && (
+        neg.signalLevel === 'POWER_GND' ||
+        neg.signalLevel === 'LOW' ||
+        (neg.signalLevel !== 'FLOATING' && (neg.voltage || 0) < (pos?.voltage || 0))
+      );
       const deltaV = (pos?.voltage || 0) - (neg?.voltage || 0);
 
-      const isBeeping = deltaV >= 2.0;
+      const isBeeping = hasPosSupply && hasNegReturn && deltaV >= 2.0;
       updates.isBeeping = isBeeping;
       if (isBeeping && !comp.runtimeState?.isBeeping) {
         soundEngine.playTone(comp.properties?.frequency || 2000);
@@ -939,23 +1090,32 @@ export function evaluateCircuit(
         soundEngine.stopTone();
       }
     } else if (comp.type === 'module-relay-1ch') {
+      const vccPin = pinStates[makePinKey(comp.id, 'VCC')];
+      const gndPin = pinStates[makePinKey(comp.id, 'GND')];
       const inPin = pinStates[makePinKey(comp.id, 'IN')];
+
+      // Relay coil requires active VCC supply (>= 3.5V) and GND return connection!
+      const hasModulePower = vccPin && vccPin.signalLevel !== 'FLOATING' && (vccPin.voltage || 0) >= 3.5 &&
+                             gndPin && (gndPin.signalLevel === 'POWER_GND' || gndPin.signalLevel === 'LOW');
+
       const inVoltage = inPin?.voltage || 0;
-      const isEnergized = inVoltage >= 2.0; // Relay triggers when IN goes HIGH
+      const isEnergized = hasModulePower && inPin && inPin.signalLevel !== 'FLOATING' && inVoltage >= 2.0;
 
       const wasEnergized = comp.runtimeState?.activeLed;
       if (isEnergized !== wasEnergized) {
         soundEngine.playRelayClick(!isEnergized);
       }
 
+      updates.hasPower = hasModulePower;
       updates.activeLed = isEnergized;
       updates.isOpen = !isEnergized; // When energized, COM switches from NC to NO
     } else if (comp.type === 'motor-dc') {
       const pos = pinStates[makePinKey(comp.id, 'POS')];
       const neg = pinStates[makePinKey(comp.id, 'NEG')];
-      const deltaV = (pos?.voltage || 0) - (neg?.voltage || 0);
+      const hasClosedCircuit = pos && neg && pos.signalLevel !== 'FLOATING' && neg.signalLevel !== 'FLOATING';
+      const deltaV = hasClosedCircuit ? (pos.voltage || 0) - (neg.voltage || 0) : 0;
 
-      if (Math.abs(deltaV) >= 1.5) {
+      if (hasClosedCircuit && Math.abs(deltaV) >= 1.5) {
         const speed = Math.min(100, Math.round((Math.abs(deltaV) / 5.0) * 100));
         updates.rpm = speed * 45; // up to 4500 RPM
         updates.speedPercent = speed;
@@ -965,12 +1125,26 @@ export function evaluateCircuit(
         updates.speedPercent = 0;
       }
     } else if (comp.type === 'motor-servo-sg90') {
+      const vccPin = pinStates[makePinKey(comp.id, 'VCC')];
+      const gndPin = pinStates[makePinKey(comp.id, 'GND')];
       const pwmPin = pinStates[makePinKey(comp.id, 'PWM')];
-      if (pwmPin && pwmPin.pwmDuty !== undefined) {
-        // Map PWM duty (0-255) to servo angle (0-180)
+
+      const hasPower = vccPin && vccPin.signalLevel !== 'FLOATING' && (vccPin.voltage || 0) >= 3.5 &&
+                       gndPin && (gndPin.signalLevel === 'POWER_GND' || gndPin.signalLevel === 'LOW');
+
+      if (hasPower && pwmPin && pwmPin.signalLevel !== 'FLOATING' && pwmPin.pwmDuty !== undefined) {
         const angle = Math.round((pwmPin.pwmDuty / 255) * 180);
         updates.angle = angle;
+      } else {
+        updates.angle = 0;
       }
+    } else if (comp.type === 'diode-laser') {
+      const vcc = pinStates[makePinKey(comp.id, 'VCC')];
+      const gnd = pinStates[makePinKey(comp.id, 'GND')];
+      const hasClosedLoop = vcc && gnd && vcc.signalLevel !== 'FLOATING' && (gnd.signalLevel === 'POWER_GND' || gnd.signalLevel === 'LOW');
+      const vVcc = vcc?.voltage || 0;
+      const vGnd = gnd?.voltage || 0;
+      updates.isOn = hasClosedLoop && (vVcc - vGnd >= 2.2);
     } else if (comp.type === 'potentiometer') {
       // Potentiometer wiper voltage divider calculation: V_wiper = V1 + (V2 - V1) * (val / 100)
       const p1 = pinStates[makePinKey(comp.id, 'PIN1')]?.voltage || 0;
