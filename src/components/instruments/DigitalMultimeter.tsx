@@ -412,8 +412,19 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
     } else if (redProbe.compId === blackProbe.compId) {
       const comp = components.find((c) => c.id === redProbe.compId);
       if (comp && comp.type === 'led') {
-        if (redProbe.pinId === 'anode' && blackProbe.pinId === 'cathode') {
+        if (redProbe.pinId.toLowerCase() === 'anode' && blackProbe.pinId.toLowerCase() === 'cathode') {
           displayValue = '1.854';
+          displayUnit = 'V';
+        } else {
+          displayValue = 'O.L';
+          displayUnit = 'V';
+        }
+      } else if (comp && comp.type.startsWith('diode-')) {
+        const rPin = redProbe.pinId.toUpperCase();
+        const bPin = blackProbe.pinId.toUpperCase();
+        if (rPin === 'ANODE' && bPin === 'CATHODE') {
+          const drop = Number(comp.properties?.forwardDrop) || (comp.type === 'diode-schottky' ? 0.245 : 0.652);
+          displayValue = drop.toFixed(3);
           displayUnit = 'V';
         } else {
           displayValue = 'O.L';
@@ -871,6 +882,22 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
                           <span>~ Transformer CT (S1 / CT)</span>
                         </button>
                       </>
+                    )}
+                    {components.some((c) => c.type.startsWith('diode-')) && (
+                      <button
+                        onClick={() => {
+                          const diode = components.find((c) => c.type.startsWith('diode-'));
+                          if (diode) {
+                            setRedProbe({ compId: diode.id, pinId: 'ANODE' });
+                            setBlackProbe({ compId: diode.id, pinId: 'CATHODE' });
+                            setDialPos('V_DC');
+                          }
+                        }}
+                        className="px-2 py-0.5 rounded text-[8.5px] font-mono font-bold bg-blue-950 hover:bg-blue-800 border border-blue-500/60 text-blue-200 transition cursor-pointer flex items-center gap-1"
+                        title="Connect Red to Diode Anode (A), Black to Cathode (K) to test input/output drop"
+                      >
+                        <span>⯈| Diode (A / K Drop)</span>
+                      </button>
                     )}
                     {components.some((c) => c.type === 'power-supply-adjustable-ac') && (
                       <button

@@ -95,13 +95,13 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
   // DC local tuning state
   const [dcVoltage, setDcVoltage] = useState(12.0);
   const [dcCurrentLimit, setDcCurrentLimit] = useState(2.0);
-  const [dcPowerOn, setDcPowerOn] = useState(true);
+  const [dcPowerOn, setDcPowerOn] = useState(false);
 
   // AC local tuning state
   const [acVoltage, setAcVoltage] = useState(12.0);
   const [acFrequency, setAcFrequency] = useState(50);
   const [acWaveform, setAcWaveform] = useState<'sine' | 'square' | 'triangle'>('sine');
-  const [acPowerOn, setAcPowerOn] = useState(true);
+  const [acPowerOn, setAcPowerOn] = useState(false);
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -143,7 +143,7 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
         setDcCurrentLimit(Number(canvasDcSupply.properties.currentLimit));
       }
       if (canvasDcSupply.properties.isOn !== undefined) {
-        setDcPowerOn(canvasDcSupply.properties.isOn !== false);
+        setDcPowerOn(Boolean(canvasDcSupply.properties.isOn));
       }
     }
   }, [canvasDcSupply?.properties?.voltage, canvasDcSupply?.properties?.currentLimit, canvasDcSupply?.properties?.isOn]);
@@ -160,7 +160,7 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
         setAcWaveform(canvasAcSupply.properties.waveform);
       }
       if (canvasAcSupply.properties.isOn !== undefined) {
-        setAcPowerOn(canvasAcSupply.properties.isOn !== false);
+        setAcPowerOn(Boolean(canvasAcSupply.properties.isOn));
       }
     }
   }, [canvasAcSupply?.properties?.voltage, canvasAcSupply?.properties?.frequency, canvasAcSupply?.properties?.waveform, canvasAcSupply?.properties?.isOn]);

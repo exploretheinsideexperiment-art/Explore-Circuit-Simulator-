@@ -1592,10 +1592,28 @@ export const ComponentInspector: React.FC<ComponentInspectorProps> = ({
               {/* Live Status Display */}
               <div className="p-2 rounded bg-slate-950 border border-slate-800 text-[10px] space-y-1">
                 <div className="flex justify-between text-slate-400">
+                  <span>Input Voltage (Anode A):</span>
+                  <span className="text-amber-300 font-bold">
+                    {selectedComponent.runtimeState?.vAnode !== undefined ? `${Number(selectedComponent.runtimeState.vAnode).toFixed(2)}V` : '0.00V'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Output Voltage (Cathode K):</span>
+                  <span className="text-cyan-300 font-bold">
+                    {selectedComponent.runtimeState?.vCathode !== undefined ? `${Number(selectedComponent.runtimeState.vCathode).toFixed(2)}V` : '0.00V'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-400">
                   <span>Forward Drop (Vf):</span>
                   <span className="text-emerald-400 font-bold">{selectedComponent.properties?.forwardDrop ?? (currentSpec?.forwardDrop ?? 0.7)}V</span>
                 </div>
                 <div className="flex justify-between text-slate-400">
+                  <span>Current:</span>
+                  <span className="text-emerald-300 font-bold">
+                    {Number(selectedComponent.runtimeState?.currentMa ?? 0).toFixed(1)} mA
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-400 pt-0.5 border-t border-slate-800/80">
                   <span>State:</span>
                   <span className={`font-bold ${
                     selectedComponent.runtimeState?.isZenerBreakdown
@@ -1607,8 +1625,8 @@ export const ComponentInspector: React.FC<ComponentInspectorProps> = ({
                     {selectedComponent.runtimeState?.isZenerBreakdown
                       ? '⚡ ZENER CLAMPED'
                       : selectedComponent.runtimeState?.isForwardBiased
-                      ? 'FORWARD BIASED (ON)'
-                      : 'REVERSE / OFF'}
+                      ? 'FORWARD BIASED (CONDUCTING)'
+                      : 'REVERSE BIASED (BLOCKING)'}
                   </span>
                 </div>
               </div>

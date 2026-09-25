@@ -578,7 +578,7 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
       voltage: 5.0,
       currentLimit: 2.0,
       measuredCurrent: 0.12,
-      isOn: true,
+      isOn: false,
       mode: 'CV',
       label: 'DC BENCH'
     }
@@ -598,7 +598,7 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
       voltage: 12.0,
       frequency: 50,
       waveform: 'sine',
-      isOn: true,
+      isOn: false,
       label: 'AC SOURCE'
     }
   },
@@ -619,7 +619,7 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
       amplitude: 5.0,
       offset: 0.0,
       duty: 50,
-      isOn: true,
+      isOn: false,
       label: 'FUNC GEN'
     }
   },

@@ -82,13 +82,13 @@ export const BenchPowerSupply: React.FC<BenchPowerSupplyProps> = ({
   // DC values
   const [dcVoltage, setDcVoltage] = useState(12.0);
   const [dcCurrentLimit, setDcCurrentLimit] = useState(2.0);
-  const [dcPowerOn, setDcPowerOn] = useState(true);
+  const [dcPowerOn, setDcPowerOn] = useState(false);
 
   // AC values
   const [acVoltage, setAcVoltage] = useState(12.0);
   const [acFrequency, setAcFrequency] = useState(50);
   const [acWaveform, setAcWaveform] = useState<'sine' | 'square' | 'triangle'>('sine');
-  const [acPowerOn, setAcPowerOn] = useState(true);
+  const [acPowerOn, setAcPowerOn] = useState(false);
 
   // Find canvas supplies
   const canvasDcSupply = components.find(
@@ -106,7 +106,7 @@ export const BenchPowerSupply: React.FC<BenchPowerSupplyProps> = ({
         setDcCurrentLimit(Number(canvasDcSupply.properties.currentLimit));
       }
       if (canvasDcSupply.properties.isOn !== undefined) {
-        setDcPowerOn(canvasDcSupply.properties.isOn !== false);
+        setDcPowerOn(Boolean(canvasDcSupply.properties.isOn));
       }
     }
   }, [canvasDcSupply?.properties?.voltage, canvasDcSupply?.properties?.currentLimit, canvasDcSupply?.properties?.isOn]);
@@ -124,7 +124,7 @@ export const BenchPowerSupply: React.FC<BenchPowerSupplyProps> = ({
         setAcWaveform(canvasAcSupply.properties.waveform);
       }
       if (canvasAcSupply.properties.isOn !== undefined) {
-        setAcPowerOn(canvasAcSupply.properties.isOn !== false);
+        setAcPowerOn(Boolean(canvasAcSupply.properties.isOn));
       }
     }
   }, [canvasAcSupply?.properties?.voltage, canvasAcSupply?.properties?.frequency, canvasAcSupply?.properties?.waveform, canvasAcSupply?.properties?.isOn]);

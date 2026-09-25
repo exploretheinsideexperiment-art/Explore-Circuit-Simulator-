@@ -76,38 +76,53 @@ export function evaluateCircuit(
       let wave: 'sine' | 'square' | 'triangle' | 'sawtooth' | undefined = undefined;
 
       if (comp.type === 'power-supply-adjustable-ac') {
+        const isAcOn = Boolean(comp.properties?.isOn);
         if (p.id === 'LIVE' || p.type === 'power_vcc') {
-          v = comp.properties?.isOn === false ? 0 : Number(comp.properties?.voltage ?? 12.0);
-          isAc = true;
+          v = isAcOn ? Number(comp.properties?.voltage ?? 12.0) : 0;
+          isAc = isAcOn;
           freq = Number(comp.properties?.frequency ?? 50);
           wave = comp.properties?.waveform ?? 'sine';
         } else if (p.id === 'NEUTRAL' || p.type === 'power_gnd') {
           v = 0;
         }
+      } else if (comp.type === 'power-supply-adjustable-dc') {
+        const isDcOn = Boolean(comp.properties?.isOn);
+        if (p.id === 'VCC' || p.type === 'power_vcc') {
+          v = isDcOn ? Number(comp.properties?.voltage ?? 12.0) : 0;
+        } else if (p.id === 'GND' || p.type === 'power_gnd') {
+          v = 0;
+        }
       } else if (comp.type === 'function-generator') {
+        const isFgOn = Boolean(comp.properties?.isOn);
         if (p.id === 'OUT' || p.type === 'power_vcc') {
-          v = comp.properties?.isOn === false ? 0 : Number(comp.properties?.amplitude ?? 5.0);
-          isAc = true;
+          v = isFgOn ? Number(comp.properties?.amplitude ?? 5.0) : 0;
+          isAc = isFgOn;
           freq = Number(comp.properties?.frequency ?? 1000);
           wave = comp.properties?.waveform ?? 'sine';
         } else if (p.id === 'GND' || p.type === 'power_gnd') {
           v = 0;
         }
       } else if (p.type === 'power_vcc') {
-        if (comp.properties?.isOn === false) {
+        if (comp.type.startsWith('power-supply-')) {
+          const isPwrOn = Boolean(comp.properties?.isOn);
+          v = isPwrOn ? Number(comp.properties?.voltage ?? (p.voltage ?? 5.0)) : 0;
+        } else if (comp.properties?.isOn === false) {
           v = 0;
         } else if (comp.properties?.voltage !== undefined) {
           v = Number(comp.properties.voltage);
         }
       }
 
+      const isPwrVcc = p.type === 'power_vcc';
+      const isPwrGnd = p.type === 'power_gnd';
+
       pinStates[key] = {
         compId: comp.id,
         pinId: p.id,
         voltage: v,
-        isDriven: p.type === 'power_vcc' || p.type === 'power_gnd',
-        driverType: p.type === 'power_vcc' ? 'power' : p.type === 'power_gnd' ? 'ground' : 'passive',
-        signalLevel: p.type === 'power_vcc' ? 'POWER_VCC' : p.type === 'power_gnd' ? 'POWER_GND' : 'FLOATING',
+        isDriven: isPwrGnd || (isPwrVcc && v > 0),
+        driverType: isPwrGnd ? 'ground' : (isPwrVcc && v > 0) ? 'power' : 'passive',
+        signalLevel: isPwrGnd ? 'POWER_GND' : (isPwrVcc && v > 0) ? 'POWER_VCC' : 'FLOATING',
         isAc,
         frequency: freq,
         waveform: wave,
@@ -594,19 +609,49 @@ export function evaluateCircuit(
     } else if (comp.type === 'diode-pn' || comp.type === 'diode-schottky' || comp.type === 'diode-constant-current') {
       const diodeDef = DIODE_MODELS.find(d => d.model === comp.properties?.model);
       const fDrop = comp.properties?.forwardDrop ?? (diodeDef?.forwardDrop ?? (comp.type === 'diode-schottky' ? 0.25 : 0.65));
-      const vAnode = pinStates[makePinKey(comp.id, 'ANODE')]?.voltage || 0;
-      const vCathode = pinStates[makePinKey(comp.id, 'CATHODE')]?.voltage || 0;
-      if (vAnode - vCathode >= fDrop) {
-        addEdge(makePinKey(comp.id, 'ANODE'), makePinKey(comp.id, 'CATHODE'));
+      const aKey = makePinKey(comp.id, 'ANODE');
+      const cKey = makePinKey(comp.id, 'CATHODE');
+      const pAnode = pinStates[aKey];
+      const pCathode = pinStates[cKey];
+      const vAnode = pAnode?.voltage || 0;
+      const vCathode = pCathode?.voltage || 0;
+
+      // Diode conducts when Anode is positive and forward biased
+      if (vAnode >= fDrop && (vAnode >= vCathode || !pCathode?.isDriven)) {
+        const vOut = Math.max(0, Number((vAnode - fDrop).toFixed(2)));
+        if (pinStates[cKey]) {
+          pinStates[cKey].voltage = vOut;
+          pinStates[cKey].isDriven = true;
+          pinStates[cKey].driverType = 'power';
+          pinStates[cKey].signalLevel = vOut > 1.5 ? 'HIGH' : vOut > 0 ? 'LOW' : 'POWER_GND';
+          pinStates[cKey].isAc = false; // Diode rectifies AC into DC output!
+        }
         activeConductionAdded = true;
       }
     } else if (comp.type === 'diode-zener') {
       const diodeDef = DIODE_MODELS.find(d => d.model === comp.properties?.model);
       const vz = comp.properties?.zenerVoltage ?? (diodeDef?.zenerVoltage ?? 5.1);
-      const vAnode = pinStates[makePinKey(comp.id, 'ANODE')]?.voltage || 0;
-      const vCathode = pinStates[makePinKey(comp.id, 'CATHODE')]?.voltage || 0;
-      if (vAnode - vCathode >= 0.65 || vCathode - vAnode >= vz) {
-        addEdge(makePinKey(comp.id, 'ANODE'), makePinKey(comp.id, 'CATHODE'));
+      const aKey = makePinKey(comp.id, 'ANODE');
+      const cKey = makePinKey(comp.id, 'CATHODE');
+      const vAnode = pinStates[aKey]?.voltage || 0;
+      const vCathode = pinStates[cKey]?.voltage || 0;
+
+      if (vAnode >= 0.65) {
+        // Forward bias: conducts with 0.65V drop
+        const vOut = Math.max(0, Number((vAnode - 0.65).toFixed(2)));
+        if (pinStates[cKey]) {
+          pinStates[cKey].voltage = vOut;
+          pinStates[cKey].isDriven = true;
+          pinStates[cKey].driverType = 'power';
+          pinStates[cKey].signalLevel = vOut > 1.5 ? 'HIGH' : 'POWER_GND';
+          pinStates[cKey].isAc = false;
+        }
+        activeConductionAdded = true;
+      } else if (vCathode - vAnode >= vz) {
+        // Reverse breakdown: clamps cathode voltage to vz
+        if (pinStates[cKey]) {
+          pinStates[cKey].voltage = Number((vAnode + vz).toFixed(2));
+        }
         activeConductionAdded = true;
       }
     } else if (comp.type === 'diode-diac') {
@@ -986,17 +1031,28 @@ export function evaluateCircuit(
       const vAnode = pinStates[makePinKey(comp.id, 'ANODE')]?.voltage || 0;
       const vCathode = pinStates[makePinKey(comp.id, 'CATHODE')]?.voltage || 0;
       const fDrop = comp.type === 'diode-schottky' ? 0.25 : 0.65;
-      const delta = vAnode - vCathode;
-      const isForwardBiased = delta >= fDrop;
+      const isForwardBiased = vAnode >= fDrop && (vCathode > 0 || vAnode >= vCathode);
       updates.isForwardBiased = isForwardBiased;
-      updates.currentMa = isForwardBiased ? Math.min(1000, Math.round((delta / 0.1) * 10) / 10) : 0;
+      updates.currentMa = isForwardBiased ? Math.max(1.0, Math.min(1000, Math.round(((vAnode - fDrop) / 100) * 1000 * 10) / 10)) : 0;
+      updates.vAnode = vAnode;
+      updates.vCathode = vCathode;
+      updates.forwardDrop = fDrop;
     } else if (comp.type === 'diode-zener') {
       const vAnode = pinStates[makePinKey(comp.id, 'ANODE')]?.voltage || 0;
       const vCathode = pinStates[makePinKey(comp.id, 'CATHODE')]?.voltage || 0;
       const vz = comp.properties?.zenerVoltage ?? 5.1;
-      const isZenerBreakdown = vCathode - vAnode >= vz;
+      const isZenerBreakdown = vCathode - vAnode >= vz - 0.1;
+      const isForwardBiased = vAnode >= 0.65;
       updates.isZenerBreakdown = isZenerBreakdown;
-      updates.isForwardBiased = vAnode - vCathode >= 0.65;
+      updates.isForwardBiased = isForwardBiased;
+      updates.currentMa = isForwardBiased
+        ? Math.max(1.0, Math.min(1000, Math.round(((vAnode - 0.65) / 100) * 1000 * 10) / 10))
+        : isZenerBreakdown
+        ? Math.max(1.0, Math.min(1000, Math.round(((vCathode - vAnode) / 100) * 1000 * 10) / 10))
+        : 0;
+      updates.vAnode = vAnode;
+      updates.vCathode = vCathode;
+      updates.zenerVoltage = vz;
     } else if (comp.type === 'diode-diac') {
       const vT1 = pinStates[makePinKey(comp.id, 'T1')]?.voltage || 0;
       const vT2 = pinStates[makePinKey(comp.id, 'T2')]?.voltage || 0;

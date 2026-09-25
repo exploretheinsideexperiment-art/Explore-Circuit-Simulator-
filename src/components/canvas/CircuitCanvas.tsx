@@ -248,6 +248,135 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   const lastCompTapRef = useRef<{ compId: string; time: number } | null>(null);
   const wireStartTimeRef = useRef<number>(0);
 
+  // Pin Absolute Positions Calculation
+  const getPinAbsolutePos = useCallback((comp: CircuitComponent, pin: PinDef) => {
+    const rad = (comp.rotation * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+
+    const { width: compW, height: compH } = getComponentDimensions(comp);
+
+    const cx = compW / 2;
+    const cy = compH / 2;
+
+    const dx = pin.x - cx;
+    const dy = pin.y - cy;
+
+    const rotatedX = dx * cos - dy * sin + cx;
+    const rotatedY = dx * sin + dy * cos + cy;
+
+    return {
+      x: comp.x + rotatedX,
+      y: comp.y + rotatedY,
+    };
+  }, []);
+
+  // Proximity Terminal Auto-Connect State
+  // When a component's terminal is held near another terminal for ~800ms, they auto-connect!
+  const [proximitySnap, setProximitySnap] = useState<{
+    sourceCompId: string;
+    sourcePinId: string;
+    sourcePinName: string;
+    targetCompId: string;
+    targetPinId: string;
+    targetPinName: string;
+    sourcePos: { x: number; y: number };
+    targetPos: { x: number; y: number };
+    distance: number;
+  } | null>(null);
+  const proximitySnapRef = useRef<typeof proximitySnap>(null);
+  const [proximityProgress, setProximityProgress] = useState<number>(0);
+  const proximityTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const autoConnectPair = useCallback(
+    (snap: {
+      sourceCompId: string;
+      sourcePinId: string;
+      sourcePinName: string;
+      targetCompId: string;
+      targetPinId: string;
+      targetPinName: string;
+    }) => {
+      const wireExists = wires.some(
+        (w) =>
+          (w.fromCompId === snap.sourceCompId &&
+            w.fromPinId === snap.sourcePinId &&
+            w.toCompId === snap.targetCompId &&
+            w.toPinId === snap.targetPinId) ||
+          (w.fromCompId === snap.targetCompId &&
+            w.fromPinId === snap.targetPinId &&
+            w.toCompId === snap.sourceCompId &&
+            w.toPinId === snap.sourcePinId)
+      );
+      if (!wireExists) {
+        const sId = snap.sourcePinId.toLowerCase();
+        const tId = snap.targetPinId.toLowerCase();
+        const isPositive = ['vcc', 'live', '5v', '3v3', 'anode', 'pos', '+', 'pri1', 'sec1'].some(
+          (k) => sId.includes(k) || tId.includes(k)
+        );
+        const isNegative = ['gnd', 'neutral', 'cathode', 'neg', '-', 'pri2', 'sec2'].some(
+          (k) => sId.includes(k) || tId.includes(k)
+        );
+        const chosenColor = isPositive ? '#ef4444' : isNegative ? '#06b6d4' : '#10b981';
+
+        onAddWire(snap.sourceCompId, snap.sourcePinId, snap.targetCompId, snap.targetPinId, chosenColor, []);
+        try {
+          soundEngine.playTone(1350, 0.09);
+          soundEngine.playRelayClick(true);
+        } catch (_) {}
+        setConnectionToast(`⚡ Terminals Auto-Connected: ${snap.sourcePinName} ⟷ ${snap.targetPinName}!`);
+        setTimeout(() => setConnectionToast(null), 3000);
+      }
+    },
+    [wires, onAddWire]
+  );
+
+  useEffect(() => {
+    if (!proximitySnap) {
+      setProximityProgress(0);
+      if (proximityTimerRef.current) {
+        clearInterval(proximityTimerRef.current);
+        proximityTimerRef.current = null;
+      }
+      return;
+    }
+
+    const HOLD_DURATION_MS = 800; // ~0.8s hold near terminal to auto-connect!
+    const startTime = Date.now();
+
+    proximityTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const pct = Math.min(100, (elapsed / HOLD_DURATION_MS) * 100);
+      setProximityProgress(pct);
+
+      if (pct >= 100) {
+        if (proximityTimerRef.current) {
+          clearInterval(proximityTimerRef.current);
+          proximityTimerRef.current = null;
+        }
+        if (proximitySnapRef.current) {
+          autoConnectPair(proximitySnapRef.current);
+        }
+        setProximitySnap(null);
+        proximitySnapRef.current = null;
+        setProximityProgress(0);
+      }
+    }, 25);
+
+    return () => {
+      if (proximityTimerRef.current) {
+        clearInterval(proximityTimerRef.current);
+        proximityTimerRef.current = null;
+      }
+    };
+  }, [
+    proximitySnap?.sourceCompId,
+    proximitySnap?.sourcePinId,
+    proximitySnap?.targetCompId,
+    proximitySnap?.targetPinId,
+    autoConnectPair,
+  ]);
+
   // Canvas bounds & coordinate transformations
   const getCanvasCoords = useCallback((clientX: number, clientY: number) => {
     if (!containerRef.current) return { x: 0, y: 0 };
@@ -464,10 +593,90 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       // 2px micro-snap for fluid yet crisp alignment
       const snappedX = Math.round(newX / 2) * 2;
       const snappedY = Math.round(newY / 2) * 2;
-      onMoveComponent(activeDrag.id, snappedX, snappedY);
+
+      // Check proximity with all other component pins for Auto-Connect
+      const activeComp = components.find((c) => c.id === activeDrag.id);
+      if (activeComp) {
+        const tempComp = { ...activeComp, x: snappedX, y: snappedY };
+        const activePins = getComponentPins(tempComp);
+        let closestPair: {
+          sourceCompId: string;
+          sourcePinId: string;
+          sourcePinName: string;
+          targetCompId: string;
+          targetPinId: string;
+          targetPinName: string;
+          sourcePos: { x: number; y: number };
+          targetPos: { x: number; y: number };
+          distance: number;
+        } | null = null;
+        let minDistance = 28; // within 28px proximity threshold
+
+        for (const pinA of activePins) {
+          const posA = getPinAbsolutePos(tempComp, pinA);
+          for (const otherComp of components) {
+            if (otherComp.id === activeDrag.id) continue;
+            const otherPins = getComponentPins(otherComp);
+            for (const pinB of otherPins) {
+              const posB = getPinAbsolutePos(otherComp, pinB);
+              const d = Math.hypot(posA.x - posB.x, posA.y - posB.y);
+              if (d <= minDistance) {
+                // Check if wire already exists
+                const alreadyWired = wires.some(
+                  (w) =>
+                    (w.fromCompId === activeComp.id && w.fromPinId === pinA.id && w.toCompId === otherComp.id && w.toPinId === pinB.id) ||
+                    (w.fromCompId === otherComp.id && w.fromPinId === pinB.id && w.toCompId === activeComp.id && w.toPinId === pinA.id)
+                );
+                if (!alreadyWired) {
+                  minDistance = d;
+                  closestPair = {
+                    sourceCompId: activeComp.id,
+                    sourcePinId: pinA.id,
+                    sourcePinName: pinA.name || pinA.id,
+                    targetCompId: otherComp.id,
+                    targetPinId: pinB.id,
+                    targetPinName: pinB.name || pinB.id,
+                    sourcePos: posA,
+                    targetPos: posB,
+                    distance: d,
+                  };
+                }
+              }
+            }
+          }
+        }
+
+        if (closestPair) {
+          // If within magnetic latch range (<= 14px), micro-magnet snap the dragged component so pins touch!
+          const snapOffsetDx = closestPair.targetPos.x - closestPair.sourcePos.x;
+          const snapOffsetDy = closestPair.targetPos.y - closestPair.sourcePos.y;
+          if (closestPair.distance <= 14) {
+            onMoveComponent(activeDrag.id, snappedX + snapOffsetDx, snappedY + snapOffsetDy);
+          } else {
+            onMoveComponent(activeDrag.id, snappedX, snappedY);
+          }
+
+          setProximitySnap(closestPair);
+          proximitySnapRef.current = closestPair;
+        } else {
+          onMoveComponent(activeDrag.id, snappedX, snappedY);
+          if (proximitySnapRef.current) {
+            setProximitySnap(null);
+            proximitySnapRef.current = null;
+          }
+        }
+      } else {
+        onMoveComponent(activeDrag.id, snappedX, snappedY);
+      }
     };
 
     const handlePointerEnd = () => {
+      if (proximitySnapRef.current) {
+        autoConnectPair(proximitySnapRef.current);
+        setProximitySnap(null);
+        proximitySnapRef.current = null;
+        setProximityProgress(0);
+      }
       setActiveDrag(null);
     };
 
@@ -484,7 +693,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       window.removeEventListener('touchend', handlePointerEnd);
       window.removeEventListener('touchcancel', handlePointerEnd);
     };
-  }, [activeDrag, getCanvasCoords, onMoveComponent]);
+  }, [activeDrag, getCanvasCoords, onMoveComponent, components, getPinAbsolutePos, wires, autoConnectPair]);
 
   // Global mousemove for in-progress wire tracking
   useEffect(() => {
@@ -500,29 +709,6 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       window.removeEventListener('mousemove', handleGlobalWireMove);
     };
   }, [wireStart, getCanvasCoords]);
-
-  // Pin Absolute Positions Calculation
-  const getPinAbsolutePos = useCallback((comp: CircuitComponent, pin: PinDef) => {
-    const rad = (comp.rotation * Math.PI) / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-
-    const { width: compW, height: compH } = getComponentDimensions(comp);
-
-    const cx = compW / 2;
-    const cy = compH / 2;
-
-    const dx = pin.x - cx;
-    const dy = pin.y - cy;
-
-    const rotatedX = dx * cos - dy * sin + cx;
-    const rotatedY = dx * sin + dy * cos + cy;
-
-    return {
-      x: comp.x + rotatedX,
-      y: comp.y + rotatedY,
-    };
-  }, []);
 
   // Helper: Automatically find best matching pin on a target component based on wire polarity
   const getBestTargetPin = useCallback((sourcePinId: string, targetComp: CircuitComponent): string | null => {
@@ -1370,7 +1556,94 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
             </g>
           );
         })()}
+
+        {/* Real-time Proximity Terminal Auto-Connect Indicator */}
+        {proximitySnap && (
+          <g className="pointer-events-none select-none">
+            {/* Pulsing Magnetic Connection Beam between Pin A and Pin B */}
+            <line
+              x1={proximitySnap.sourcePos.x}
+              y1={proximitySnap.sourcePos.y}
+              x2={proximitySnap.targetPos.x}
+              y2={proximitySnap.targetPos.y}
+              stroke="#38bdf8"
+              strokeWidth={3.5}
+              strokeDasharray="5 3"
+              strokeLinecap="round"
+              filter="url(#wire-glow)"
+              className="animate-pulse"
+            />
+            {/* Source Pin Ring */}
+            <circle
+              cx={proximitySnap.sourcePos.x}
+              cy={proximitySnap.sourcePos.y}
+              r={9}
+              fill="rgba(56, 189, 248, 0.25)"
+              stroke="#38bdf8"
+              strokeWidth={2}
+            />
+
+            {/* Target Pin Outer Pulsing Wave */}
+            <circle
+              cx={proximitySnap.targetPos.x}
+              cy={proximitySnap.targetPos.y}
+              r={16 + (proximityProgress / 100) * 4}
+              fill="rgba(14, 165, 233, 0.15)"
+              stroke="#38bdf8"
+              strokeWidth={1.5}
+              strokeDasharray="4 2"
+              className="animate-spin"
+              style={{ animationDuration: '4s' }}
+            />
+
+            {/* Radial Countdown Progress Ring */}
+            <circle
+              cx={proximitySnap.targetPos.x}
+              cy={proximitySnap.targetPos.y}
+              r={13}
+              fill="none"
+              stroke="#0f172a"
+              strokeWidth={3}
+            />
+            <circle
+              cx={proximitySnap.targetPos.x}
+              cy={proximitySnap.targetPos.y}
+              r={13}
+              fill="none"
+              stroke="#22c55e"
+              strokeWidth={3.5}
+              strokeDasharray={2 * Math.PI * 13}
+              strokeDashoffset={2 * Math.PI * 13 * (1 - proximityProgress / 100)}
+              strokeLinecap="round"
+              transform={`rotate(-90 ${proximitySnap.targetPos.x} ${proximitySnap.targetPos.y})`}
+            />
+
+            {/* Center Magnetic Spark */}
+            <circle
+              cx={proximitySnap.targetPos.x}
+              cy={proximitySnap.targetPos.y}
+              r={4}
+              fill="#facc15"
+              className="animate-ping"
+            />
+          </g>
+        )}
       </svg>
+
+      {/* Floating Auto-Connect Countdown Badge */}
+      {proximitySnap && (
+        <div
+          style={{
+            left: `${((proximitySnap.sourcePos.x + proximitySnap.targetPos.x) / 2) * zoom + pan.x}px`,
+            top: `${(Math.min(proximitySnap.sourcePos.y, proximitySnap.targetPos.y) - 24) * zoom + pan.y}px`,
+            transform: 'translateX(-50%)',
+          }}
+          className="absolute z-50 pointer-events-none bg-slate-950/95 border-2 border-cyan-400 text-cyan-200 text-[10.5px] font-mono font-bold px-3 py-1 rounded-full shadow-2xl flex items-center gap-1.5 backdrop-blur-md animate-bounce select-none"
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+          <span>⚡ Auto-Connecting: {proximitySnap.sourcePinName} ⟷ {proximitySnap.targetPinName} ({Math.round(proximityProgress)}%)</span>
+        </div>
+      )}
 
       {/* Components Container (Free movement of all components) */}
       <div

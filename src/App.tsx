@@ -477,7 +477,7 @@ void loop() {
         ...(template?.defaultProperties || {}),
         voltage,
         currentLimit,
-        isOn: true,
+        isOn: false,
       },
     };
     setComponents((prev) => [...prev, newComp]);
@@ -506,7 +506,7 @@ void loop() {
         voltage,
         frequency,
         waveform,
-        isOn: true,
+        isOn: false,
       },
     };
     setComponents((prev) => [...prev, newComp]);
