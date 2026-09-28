@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { 
-  CircuitComponent, Wire, ViewMode, PinDef, SignalLevel 
+  CircuitComponent, Wire, ViewMode, PinDef, SignalLevel, LiveWiringStatus 
 } from '../../types';
 import { COMPONENT_CATALOG, getComponentPins, getComponentDimensions } from '../../engine/peripherals/definitions';
 import { soundEngine } from '../../engine/audio';
@@ -26,6 +26,8 @@ import {
   RealCeramicCapacitor,
   RealPolyesterCapacitor,
   RealPushButton, 
+  RealPushButton2Pole,
+  RealPushButtonDpdt,
   RealToggleSwitch 
 } from './components/RealPassivesAndSwitches';
 import { 
@@ -39,6 +41,12 @@ import {
   RealRelayModule 
 } from './components/RealSensorsAndActuators';
 import { RealBreadboard } from './components/RealBreadboard';
+import { 
+  RealScrewTerminalBlock, 
+  RealWagoConnector, 
+  RealPowerDistributionBus, 
+  RealWireTapJunction 
+} from './components/RealConnectors';
 import { 
   RealPowerSupply, 
   RealAdjustableDcSupply,
@@ -93,6 +101,7 @@ interface CircuitCanvasProps {
   externalWireStart?: { compId: string; pinId: string; color?: string } | null;
   onClearExternalWireStart?: () => void;
   onWireStartChange?: (wireInfo: { compId: string; pinId: string } | null) => void;
+  onLiveWiringChange?: (status: LiveWiringStatus | null) => void;
   zoom?: number;
   pan?: { x: number; y: number };
   showGrid?: boolean;
@@ -142,6 +151,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   externalWireStart,
   onClearExternalWireStart,
   onWireStartChange,
+  onLiveWiringChange,
   zoom: externalZoom,
   pan: externalPan,
   showGrid: externalShowGrid,
@@ -216,26 +226,26 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
   // Wiring creation state (supports both Drag-and-Drop, Click-to-Click, and Waypoint Anchoring)
   const [wireStart, setWireStart] = useState<{ compId: string; pinId: string; x: number; y: number } | null>(null);
+  const wireStartRef = useRef<{ compId: string; pinId: string; x: number; y: number } | null>(null);
+  const lastWireConnectTimeRef = useRef<number>(0);
   const [wireWaypoints, setWireWaypoints] = useState<{ x: number; y: number }[]>([]);
   const [isDraggingWire, setIsDraggingWire] = useState(false);
   const wireOriginRef = useRef<{ compId: string; pinId: string; clientX: number; clientY: number } | null>(null);
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [hoveredPin, setHoveredPin] = useState<{ compId: string; pinId: string } | null>(null);
 
-  // Terminal Pin Color Palette Popover State (opened on long-press or right-click)
-  const [terminalColorMenu, setTerminalColorMenu] = useState<{
-    compId: string;
-    pinId: string;
-    pinName: string;
-    pinType: string;
-    pinPos: { x: number; y: number };
+  // Wire Tap state (tapping directly into any existing wire as a T-junction or branching from it)
+  const [hoveredWireTap, setHoveredWireTap] = useState<{
+    wireId: string;
+    wire: Wire;
+    point: { x: number; y: number };
+  } | null>(null);
+  const wireTapStartRef = useRef<{
+    wire: Wire;
+    tapPt: { x: number; y: number };
     clientX: number;
     clientY: number;
   } | null>(null);
-
-  // Long-press detection timer for terminal pins (320ms hold)
-  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const isLongPressTriggeredRef = useRef<boolean>(false);
 
   // Active waypoint drag for modifying existing wires
   const [activeWaypointDrag, setActiveWaypointDrag] = useState<{
@@ -395,10 +405,6 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
   // Canvas Mouse Down: panning, clear selection, or attach waypoint on blank canvas
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    if (terminalColorMenu) {
-      setTerminalColorMenu(null);
-    }
-
     // If wiring is active:
     if (wireStart) {
       if (e.button === 0) {
@@ -462,6 +468,34 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
     if (activeWaypointDrag) {
       setActiveWaypointDrag(null);
+      return;
+    }
+
+    // If mouse released over a hovered wire tap target, connect immediately!
+    if (wireStart && hoveredWireTap) {
+      const { wire, point } = hoveredWireTap;
+      const targetCompId =
+        wire.fromCompId === wireStart.compId && wire.fromPinId === wireStart.pinId
+          ? wire.toCompId
+          : wire.fromCompId;
+      const targetPinId =
+        wire.fromCompId === wireStart.compId && wire.fromPinId === wireStart.pinId
+          ? wire.toPinId
+          : wire.fromPinId;
+
+      const finalWaypoints = [...wireWaypoints, point];
+      onAddWire(wireStart.compId, wireStart.pinId, targetCompId, targetPinId, wireColor, finalWaypoints);
+      try {
+        soundEngine.playRelayClick(true);
+      } catch (_) {}
+      setConnectionToast('⚡ Wire connected into existing line! (T-Junction tap)');
+      setTimeout(() => setConnectionToast(null), 3500);
+
+      setWireStart(null);
+      setWireWaypoints([]);
+      setIsDraggingWire(false);
+      setHoveredPin(null);
+      setHoveredWireTap(null);
       return;
     }
 
@@ -709,6 +743,55 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     };
   }, [wireStart, getCanvasCoords]);
 
+  // Global pointer listener for branching a new wire by dragging from any existing wire
+  useEffect(() => {
+    const handleGlobalWireTapMove = (e: MouseEvent | TouchEvent) => {
+      if (!wireTapStartRef.current || wireStart) return;
+
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+      const dist = Math.hypot(
+        clientX - wireTapStartRef.current.clientX,
+        clientY - wireTapStartRef.current.clientY
+      );
+
+      if (dist > 8) {
+        const { wire, tapPt } = wireTapStartRef.current;
+        wireTapStartRef.current = null;
+        setWireStart({
+          compId: wire.fromCompId,
+          pinId: wire.fromPinId,
+          x: tapPt.x,
+          y: tapPt.y,
+        });
+        setWireWaypoints([tapPt]);
+        setIsDraggingWire(true);
+        try {
+          soundEngine.playRelayClick(true);
+        } catch (_) {}
+        setConnectionToast('⚡ Branching new wire from existing line (T-Junction)!');
+        setTimeout(() => setConnectionToast(null), 3500);
+      }
+    };
+
+    const handleGlobalWireTapEnd = () => {
+      wireTapStartRef.current = null;
+    };
+
+    window.addEventListener('mousemove', handleGlobalWireTapMove);
+    window.addEventListener('mouseup', handleGlobalWireTapEnd);
+    window.addEventListener('touchmove', handleGlobalWireTapMove);
+    window.addEventListener('touchend', handleGlobalWireTapEnd);
+
+    return () => {
+      window.removeEventListener('mousemove', handleGlobalWireTapMove);
+      window.removeEventListener('mouseup', handleGlobalWireTapEnd);
+      window.removeEventListener('touchmove', handleGlobalWireTapMove);
+      window.removeEventListener('touchend', handleGlobalWireTapEnd);
+    };
+  }, [wireStart, getCanvasCoords]);
+
   // Helper: Automatically find best matching pin on a target component based on wire polarity
   const getBestTargetPin = useCallback((sourcePinId: string, targetComp: CircuitComponent): string | null => {
     const pins = getComponentPins(targetComp);
@@ -807,10 +890,93 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     }
   }, [externalWireStart, startWireFromPin, onClearExternalWireStart]);
 
+  // Synchronize wireStartRef with wireStart state
+  useEffect(() => {
+    wireStartRef.current = wireStart;
+  }, [wireStart]);
+
   // Notify parent of active wire state
   useEffect(() => {
     onWireStartChange?.(wireStart ? { compId: wireStart.compId, pinId: wireStart.pinId } : null);
   }, [wireStart, onWireStartChange]);
+
+  // Synchronize detailed live wiring state and connection messages with parent/panel
+  useEffect(() => {
+    if (!onLiveWiringChange) return;
+
+    if (!wireStart) {
+      onLiveWiringChange({
+        isWiring: false,
+        waypointCount: 0,
+        wireColor,
+        lastConnectionMessage: connectionToast,
+        activeMessage: connectionToast || undefined,
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    const sourceComp = components.find((c) => c.id === wireStart.compId);
+    const sourcePins = sourceComp ? getComponentPins(sourceComp) : [];
+    const sourcePin = sourcePins.find((p) => p.id === wireStart.pinId);
+    const sourceCompName = sourceComp?.properties?.label || sourceComp?.name || sourceComp?.type || 'Component';
+    const sourcePinName = sourcePin?.name || sourcePin?.label || wireStart.pinId;
+
+    let targetComp: CircuitComponent | undefined;
+    let targetPinName: string | undefined;
+    let targetPinType: string | undefined;
+    let targetPinVoltage: number | undefined;
+
+    if (hoveredPin) {
+      targetComp = components.find((c) => c.id === hoveredPin.compId);
+      const targetPins = targetComp ? getComponentPins(targetComp) : [];
+      const tPin = targetPins.find((p) => p.id === hoveredPin.pinId);
+      targetPinName = tPin?.name || tPin?.label || hoveredPin.pinId;
+      targetPinType = tPin?.type;
+      targetPinVoltage = tPin?.voltage;
+    }
+
+    const targetCompName = targetComp ? (targetComp.properties?.label || targetComp.name || targetComp.type) : undefined;
+
+    let activeMessage = `⚡ Wire Attached from ${sourcePinName} (${sourceCompName}). Click any terminal or wire line to connect!`;
+    if (hoveredWireTap) {
+      activeMessage = `⚡ T-Junction Wire Tap: Click on wire line to connect into line!`;
+    } else if (targetPinName && targetCompName) {
+      activeMessage = `⚡ Ready to Connect: ${sourcePinName} (${sourceCompName}) ➔ ${targetPinName} (${targetCompName}). Click to lock connection!`;
+    }
+
+    onLiveWiringChange({
+      isWiring: true,
+      sourceCompId: wireStart.compId,
+      sourcePinId: wireStart.pinId,
+      sourcePinName,
+      sourceCompName,
+      sourcePinType: sourcePin?.type,
+      sourceVoltage: sourcePin?.voltage,
+      targetCompId: hoveredPin?.compId,
+      targetPinId: hoveredPin?.pinId,
+      targetPinName,
+      targetCompName,
+      targetPinType,
+      targetVoltage: targetPinVoltage,
+      hoveredWireId: hoveredWireTap?.wireId,
+      isWireTap: !!hoveredWireTap,
+      waypointCount: wireWaypoints.length,
+      activeMessage,
+      lastConnectionMessage: connectionToast,
+      wireColor,
+      timestamp: Date.now(),
+    });
+  }, [
+    wireStart,
+    hoveredPin,
+    hoveredWireTap,
+    wireWaypoints,
+    wireColor,
+    connectionToast,
+    components,
+    onLiveWiringChange,
+  ]);
 
   // Handle Pin Down (Start Dragging Wire, Hold for Color Selection, or Click 1)
   const handlePinMouseDown = (
@@ -819,21 +985,31 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     pin: PinDef
   ) => {
     e.stopPropagation(); // MUST stop parent component from dragging!
+
+    // Prevent immediate re-trigger if wire was just completed in previous event
+    if (Date.now() - lastWireConnectTimeRef.current < 400) {
+      return;
+    }
+
     const clientX = 'clientX' in e ? e.clientX : e.touches[0]?.clientX || 0;
     const clientY = 'clientY' in e ? e.clientY : e.touches[0]?.clientY || 0;
     const pinPos = getPinAbsolutePos(comp, pin);
     const canvasCoords = getCanvasCoords(clientX, clientY);
 
+    const activeStart = wireStartRef.current || wireStart;
+
     // If already in wire creation mode and clicking a DIFFERENT pin: connect immediately!
-    if (wireStart && (wireStart.compId !== comp.id || wireStart.pinId !== pin.id)) {
-      onAddWire(wireStart.compId, wireStart.pinId, comp.id, pin.id, wireColor, wireWaypoints);
+    if (activeStart && (activeStart.compId !== comp.id || activeStart.pinId !== pin.id)) {
+      onAddWire(activeStart.compId, activeStart.pinId, comp.id, pin.id, wireColor, wireWaypoints);
       try {
         soundEngine.playRelayClick(true);
       } catch (_) {}
       const targetName = comp.properties?.label || comp.name || comp.type;
-      setConnectionToast(`⚡ Wire connected from ${wireStart.pinId} to ${targetName} (${pin.id})!`);
+      setConnectionToast(`⚡ Wire connected from ${activeStart.pinId} to ${targetName} (${pin.id})!`);
       setTimeout(() => setConnectionToast(null), 3500);
 
+      lastWireConnectTimeRef.current = Date.now();
+      wireStartRef.current = null;
       setWireStart(null);
       setWireWaypoints([]);
       setIsDraggingWire(false);
@@ -841,32 +1017,17 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       return;
     }
 
-    // Setup hold/long-press detection (~320ms) to trigger wire color palette right at this terminal!
-    isLongPressTriggeredRef.current = false;
-    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-    longPressTimerRef.current = setTimeout(() => {
-      isLongPressTriggeredRef.current = true;
-      setTerminalColorMenu({
-        compId: comp.id,
-        pinId: pin.id,
-        pinName: pin.name || pin.id,
-        pinType: pin.type || 'terminal',
-        pinPos,
-        clientX,
-        clientY,
-      });
-      setIsDraggingWire(false);
-    }, 320);
-
-    if (!wireStart) {
+    if (!activeStart) {
       // Start new wire
       wireStartTimeRef.current = Date.now();
-      setWireStart({
+      const newStart = {
         compId: comp.id,
         pinId: pin.id,
         x: pinPos.x,
         y: pinPos.y,
-      });
+      };
+      wireStartRef.current = newStart;
+      setWireStart(newStart);
       setWireWaypoints([]);
       setIsDraggingWire(true);
       setCursorPos(canvasCoords);
@@ -876,12 +1037,15 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
         clientX,
         clientY,
       };
-    } else if (wireStart.compId === comp.id && wireStart.pinId === pin.id) {
-      // Clicked same pin again: cancel wire
-      setWireStart(null);
-      setWireWaypoints([]);
-      setIsDraggingWire(false);
-      setHoveredPin(null);
+    } else if (activeStart.compId === comp.id && activeStart.pinId === pin.id) {
+      // Clicked same pin again after some time: cancel wire
+      if (Date.now() - wireStartTimeRef.current > 350) {
+        wireStartRef.current = null;
+        setWireStart(null);
+        setWireWaypoints([]);
+        setIsDraggingWire(false);
+        setHoveredPin(null);
+      }
     }
   };
 
@@ -893,27 +1057,25 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   ) => {
     e.stopPropagation();
 
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-
-    // If long press hold activated color menu, ignore normal mouseup action
-    if (isLongPressTriggeredRef.current) {
+    if (Date.now() - lastWireConnectTimeRef.current < 400) {
       return;
     }
 
-    if (wireStart) {
+    const activeStart = wireStartRef.current || wireStart;
+
+    if (activeStart) {
       // If released on a DIFFERENT pin, immediately connect!
-      if (wireStart.compId !== comp.id || wireStart.pinId !== pin.id) {
-        onAddWire(wireStart.compId, wireStart.pinId, comp.id, pin.id, wireColor, wireWaypoints);
+      if (activeStart.compId !== comp.id || activeStart.pinId !== pin.id) {
+        onAddWire(activeStart.compId, activeStart.pinId, comp.id, pin.id, wireColor, wireWaypoints);
         try {
           soundEngine.playRelayClick(true);
         } catch (_) {}
         const targetName = comp.properties?.label || comp.name || comp.type;
-        setConnectionToast(`⚡ Wire connected from ${wireStart.pinId} to ${targetName} (${pin.id})!`);
+        setConnectionToast(`⚡ Wire connected from ${activeStart.pinId} to ${targetName} (${pin.id})!`);
         setTimeout(() => setConnectionToast(null), 3500);
 
+        lastWireConnectTimeRef.current = Date.now();
+        wireStartRef.current = null;
         setWireStart(null);
         setWireWaypoints([]);
         setIsDraggingWire(false);
@@ -926,45 +1088,24 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     }
   };
 
-  // Right-click on terminal pin immediately opens Color Menu
+  // Right-click on terminal pin while wiring: undo waypoint or cancel
   const handlePinContextMenu = (
     e: React.MouseEvent,
-    comp: CircuitComponent,
-    pin: PinDef
+    _comp: CircuitComponent,
+    _pin: PinDef
   ) => {
     e.preventDefault();
     e.stopPropagation();
-    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-    const pinPos = getPinAbsolutePos(comp, pin);
-    setTerminalColorMenu({
-      compId: comp.id,
-      pinId: pin.id,
-      pinName: pin.name || pin.id,
-      pinType: pin.type || 'terminal',
-      pinPos,
-      clientX: e.clientX,
-      clientY: e.clientY,
-    });
-    setIsDraggingWire(false);
-  };
-
-  // Handle user selecting a wire color from the terminal popup
-  const handleSelectTerminalColor = (chosenColor: string) => {
-    if (!terminalColorMenu) return;
-    if (onWireColorChange) onWireColorChange(chosenColor);
-    // Wire stays firmly connected right from this terminal with chosen color!
-    setWireStart({
-      compId: terminalColorMenu.compId,
-      pinId: terminalColorMenu.pinId,
-      x: terminalColorMenu.pinPos.x,
-      y: terminalColorMenu.pinPos.y,
-    });
-    setWireWaypoints([]);
-    setIsDraggingWire(false);
-    setTerminalColorMenu(null);
-    try {
-      soundEngine.playRelayClick(true);
-    } catch (_) {}
+    if (wireStart) {
+      if (wireWaypoints.length > 0) {
+        setWireWaypoints((prev) => prev.slice(0, -1));
+      } else {
+        setWireStart(null);
+        setWireWaypoints([]);
+        setIsDraggingWire(false);
+        setHoveredPin(null);
+      }
+    }
   };
 
   // Keyboard shortcut listener (Delete wire/component / Backspace to undo waypoint / Esc to cancel)
@@ -1004,7 +1145,6 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
         setWireWaypoints([]);
         setIsDraggingWire(false);
         setHoveredPin(null);
-        setTerminalColorMenu(null);
         onSelectComponent(null);
         onSelectWire(null);
       }
@@ -1016,19 +1156,18 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
   // Outside click listener: when wire is active, clicking outside the canvas container cancels wire immediately
   useEffect(() => {
-    if (!wireStart && !terminalColorMenu) return;
+    if (!wireStart) return;
 
     const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
       // If click was inside canvas container, canvas handlers will handle it
       if (containerRef.current && containerRef.current.contains(e.target as Node)) {
         return;
       }
-      // Clicked outside canvas (toolbar, editor, side drawer, etc.) - cancel wire & menu!
+      // Clicked outside canvas (toolbar, editor, side drawer, etc.) - cancel wire!
       setWireStart(null);
       setWireWaypoints([]);
       setIsDraggingWire(false);
       setHoveredPin(null);
-      setTerminalColorMenu(null);
     };
 
     const handleContextMenu = (e: MouseEvent) => {
@@ -1062,7 +1201,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       window.removeEventListener('touchstart', handleOutsideClick);
       window.removeEventListener('contextmenu', handleContextMenu);
     };
-  }, [wireStart, wireWaypoints, terminalColorMenu]);
+  }, [wireStart, wireWaypoints]);
 
   // Default wire colors
   const STANDARD_WIRE_COLORS = [
@@ -1090,8 +1229,11 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
         }
       }
     }
+    if (hoveredWireTap) {
+      return hoveredWireTap.point;
+    }
     return cursorPos;
-  }, [wireStart, hoveredPin, components, cursorPos, getPinAbsolutePos]);
+  }, [wireStart, hoveredPin, hoveredWireTap, components, cursorPos, getPinAbsolutePos]);
 
   // Straight or natural wire rendering
   const getWirePath = useCallback((x1: number, y1: number, x2: number, y2: number) => {
@@ -1384,22 +1526,87 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           const pathData = getMultiSegmentWirePath(pos1, wire.waypoints || [], pos2);
           const isSelected = selectedWireId === wire.id;
           const isHigh = wire.signal === 'HIGH' || wire.signal === 'PWM';
+          const isHoveredTap = hoveredWireTap?.wireId === wire.id;
 
           return (
             <g
               key={wire.id}
               className="pointer-events-auto cursor-pointer group"
+              onMouseMove={(e) => {
+                e.stopPropagation();
+                const coords = getCanvasCoords(e.clientX, e.clientY);
+                setHoveredWireTap({
+                  wireId: wire.id,
+                  wire,
+                  point: { x: Math.round(coords.x), y: Math.round(coords.y) },
+                });
+              }}
+              onMouseEnter={(e) => {
+                const coords = getCanvasCoords(e.clientX, e.clientY);
+                setHoveredWireTap({
+                  wireId: wire.id,
+                  wire,
+                  point: { x: Math.round(coords.x), y: Math.round(coords.y) },
+                });
+              }}
+              onMouseLeave={() => {
+                setHoveredWireTap((prev) => (prev?.wireId === wire.id ? null : prev));
+              }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                if (wireStart) return;
+                const coords = getCanvasCoords(e.clientX, e.clientY);
+                const tapPt = { x: Math.round(coords.x), y: Math.round(coords.y) };
+                wireTapStartRef.current = {
+                  wire,
+                  tapPt,
+                  clientX: e.clientX,
+                  clientY: e.clientY,
+                };
+              }}
               onClick={(e) => {
                 e.stopPropagation();
+                const coords = getCanvasCoords(e.clientX, e.clientY);
+                const tapPt = { x: Math.round(coords.x), y: Math.round(coords.y) };
+
+                // IF WIRING: Connect into this wire as a T-Junction tap!
                 if (wireStart) {
+                  const targetCompId =
+                    wire.fromCompId === wireStart.compId && wire.fromPinId === wireStart.pinId
+                      ? wire.toCompId
+                      : wire.fromCompId;
+                  const targetPinId =
+                    wire.fromCompId === wireStart.compId && wire.fromPinId === wireStart.pinId
+                      ? wire.toPinId
+                      : wire.fromPinId;
+
+                  const finalWaypoints = [...wireWaypoints, tapPt];
+                  onAddWire(
+                    wireStart.compId,
+                    wireStart.pinId,
+                    targetCompId,
+                    targetPinId,
+                    wireColor,
+                    finalWaypoints
+                  );
+                  try {
+                    soundEngine.playRelayClick(true);
+                  } catch (_) {}
+                  setConnectionToast('⚡ Wire connected into existing line! (T-Junction tap)');
+                  setTimeout(() => setConnectionToast(null), 3500);
+
+                  setWireStart(null);
+                  setWireWaypoints([]);
+                  setIsDraggingWire(false);
+                  setHoveredPin(null);
+                  setHoveredWireTap(null);
                   return;
                 }
+
                 if (isSelected) {
                   // If already selected, clicking along the wire inserts a new bend point!
-                  const coords = getCanvasCoords(e.clientX, e.clientY);
-                  const newPt = { x: Math.round(coords.x), y: Math.round(coords.y) };
                   const currentWps = wire.waypoints || [];
-                  onUpdateWire?.(wire.id, { waypoints: [...currentWps, newPt] });
+                  onUpdateWire?.(wire.id, { waypoints: [...currentWps, tapPt] });
                 } else {
                   onSelectWire(wire.id);
                   onSelectComponent(null);
@@ -1411,7 +1618,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                 d={pathData}
                 fill="none"
                 stroke="transparent"
-                strokeWidth={16}
+                strokeWidth={20}
               />
               {/* Wire shadow */}
               <path
@@ -1421,6 +1628,17 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                 strokeWidth={5}
                 strokeLinecap="round"
               />
+              {/* Wire Tap Hover Aura */}
+              {isHoveredTap && (
+                <path
+                  d={pathData}
+                  fill="none"
+                  stroke="#38bdf8"
+                  strokeWidth={7}
+                  strokeLinecap="round"
+                  className="opacity-40 animate-pulse pointer-events-none"
+                />
+              )}
               {/* Main wire body */}
               <path
                 d={pathData}
@@ -1448,6 +1666,19 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                 stroke="#090d16"
                 strokeWidth={1.2}
               />
+              {/* Solder junction eyelets for waypoints / T-junctions */}
+              {(wire.waypoints || []).map((wp, i) => (
+                <circle
+                  key={`wp-solder-${wire.id}-${i}`}
+                  cx={wp.x}
+                  cy={wp.y}
+                  r={3.8}
+                  fill={isSelected ? '#38bdf8' : wire.color || '#06b6d4'}
+                  stroke="#ffffff"
+                  strokeWidth={1.5}
+                  className="pointer-events-none shadow-sm drop-shadow"
+                />
+              ))}
               {/* Live Signal Animation during active simulation */}
               {isRunning && isHigh && (
                 <path
@@ -1501,6 +1732,43 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
             </g>
           );
         })}
+
+        {/* Hovered Wire Tap Indicator / Solder Snap Bead */}
+        {hoveredWireTap && (
+          <g className="pointer-events-none">
+            <circle
+              cx={hoveredWireTap.point.x}
+              cy={hoveredWireTap.point.y}
+              r={12}
+              fill="none"
+              stroke="#22d3ee"
+              strokeWidth={2}
+              strokeDasharray="4 4"
+              className="animate-spin"
+            />
+            <circle
+              cx={hoveredWireTap.point.x}
+              cy={hoveredWireTap.point.y}
+              r={5}
+              fill="#06b6d4"
+              stroke="#ffffff"
+              strokeWidth={2}
+              className="drop-shadow-lg"
+            />
+            <text
+              x={hoveredWireTap.point.x}
+              y={hoveredWireTap.point.y - 14}
+              fill="#38bdf8"
+              fontSize="10"
+              fontWeight="bold"
+              fontFamily="monospace"
+              textAnchor="middle"
+              className="select-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]"
+            >
+              {wireStart ? '⚡ TAP WIRE (CONNECT T-JUNCTION)' : '⚡ CLICK/DRAG TO BRANCH WIRE'}
+            </text>
+          </g>
+        )}
 
         {/* Dynamic Rubber-band Wire with Waypoints while routing */}
         {wireStart && (() => {
@@ -1712,21 +1980,41 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                   : `${comp.name || comp.type} (Click/drag to move across canvas, Double-tap/click to open properties)`
               }
               onMouseDown={(e) => {
+                // If a wire was just connected, suppress further action
+                if (Date.now() - lastWireConnectTimeRef.current < 400) {
+                  e.stopPropagation();
+                  return;
+                }
+
                 // If in wire creation mode:
                 if (wireStart) {
                   e.stopPropagation();
                   // If clicked same pin on same component: cancel wire
                   if (wireStart.compId === comp.id && hoveredPin?.pinId === wireStart.pinId) {
+                    wireStartRef.current = null;
                     setWireStart(null);
                     setIsDraggingWire(false);
                     setHoveredPin(null);
                     return;
                   }
 
-                  // Determine target pin: exact hovered pin or best matching pin on this component
+                  // Determine target pin: exact hovered pin or closest pin to click coordinates
                   let targetPinId = hoveredPin?.compId === comp.id ? hoveredPin.pinId : null;
-                  if (!targetPinId && comp.id !== wireStart.compId) {
-                    targetPinId = getBestTargetPin(wireStart.pinId, comp);
+                  if (!targetPinId) {
+                    const clickCoords = getCanvasCoords(e.clientX, e.clientY);
+                    const pins = getComponentPins(comp);
+                    let closestDist = Infinity;
+                    for (const p of pins) {
+                      const pos = getPinAbsolutePos(comp, p);
+                      const d = Math.hypot(pos.x - clickCoords.x, pos.y - clickCoords.y);
+                      if (d < closestDist && (comp.id !== wireStart.compId || p.id !== wireStart.pinId)) {
+                        closestDist = d;
+                        targetPinId = p.id;
+                      }
+                    }
+                    if (closestDist > 90 && comp.id !== wireStart.compId) {
+                      targetPinId = getBestTargetPin(wireStart.pinId, comp);
+                    }
                   }
 
                   if (targetPinId && (comp.id !== wireStart.compId || targetPinId !== wireStart.pinId)) {
@@ -1737,9 +2025,11 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                     const targetName = comp.properties?.label || comp.name || comp.type;
                     setConnectionToast(`⚡ Wire connected from ${wireStart.pinId} to ${targetName} (${targetPinId})!`);
                     setTimeout(() => setConnectionToast(null), 3500);
+                    lastWireConnectTimeRef.current = Date.now();
                   }
 
                   // Finish wire creation
+                  wireStartRef.current = null;
                   setWireStart(null);
                   setWireWaypoints([]);
                   setIsDraggingWire(false);
@@ -1767,9 +2057,15 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                 onDoubleClickComponent?.(comp.id);
               }}
               onTouchStart={(e) => {
+                if (Date.now() - lastWireConnectTimeRef.current < 400) {
+                  e.stopPropagation();
+                  return;
+                }
+
                 if (wireStart) {
                   e.stopPropagation();
                   if (wireStart.compId === comp.id && hoveredPin?.pinId === wireStart.pinId) {
+                    wireStartRef.current = null;
                     setWireStart(null);
                     setWireWaypoints([]);
                     setIsDraggingWire(false);
@@ -1778,8 +2074,21 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                   }
 
                   let targetPinId = hoveredPin?.compId === comp.id ? hoveredPin.pinId : null;
-                  if (!targetPinId && comp.id !== wireStart.compId) {
-                    targetPinId = getBestTargetPin(wireStart.pinId, comp);
+                  if (!targetPinId && e.touches[0]) {
+                    const clickCoords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+                    const pins = getComponentPins(comp);
+                    let closestDist = Infinity;
+                    for (const p of pins) {
+                      const pos = getPinAbsolutePos(comp, p);
+                      const d = Math.hypot(pos.x - clickCoords.x, pos.y - clickCoords.y);
+                      if (d < closestDist && (comp.id !== wireStart.compId || p.id !== wireStart.pinId)) {
+                        closestDist = d;
+                        targetPinId = p.id;
+                      }
+                    }
+                    if (closestDist > 90 && comp.id !== wireStart.compId) {
+                      targetPinId = getBestTargetPin(wireStart.pinId, comp);
+                    }
                   }
 
                   if (targetPinId && (comp.id !== wireStart.compId || targetPinId !== wireStart.pinId)) {
@@ -1790,8 +2099,10 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                     const targetName = comp.properties?.label || comp.name || comp.type;
                     setConnectionToast(`⚡ Wire connected from ${wireStart.pinId} to ${targetName} (${targetPinId})!`);
                     setTimeout(() => setConnectionToast(null), 3500);
+                    lastWireConnectTimeRef.current = Date.now();
                   }
 
+                  wireStartRef.current = null;
                   setWireStart(null);
                   setWireWaypoints([]);
                   setIsDraggingWire(false);
@@ -1844,104 +2155,6 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           );
         })}
       </div>
-
-      {/* Wire Creation Banner with Live Pin Info, Waypoint Count & Instructions */}
-      {wireStart && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-[#090f1d]/95 border-2 border-cyan-400/90 px-4 py-2 rounded-full text-xs font-mono text-cyan-100 shadow-2xl backdrop-blur-md flex items-center gap-3 animate-in fade-in slide-in-from-top-3 max-w-[92vw] flex-wrap justify-center">
-          <span
-            className="w-3 h-3 rounded-full animate-ping shrink-0"
-            style={{ backgroundColor: wireColor }}
-          />
-          <span className="text-center">
-            <strong className="text-white">⚡ Wire Attached from {wireStart.pinId}</strong>
-            <span className="text-cyan-300 hidden sm:inline"> (Click blank canvas to drop direction bends)</span>
-            {' — '}
-            <strong className="text-emerald-300">Click any terminal to connect!</strong>
-            {wireWaypoints.length > 0 && (
-              <span className="ml-1 text-amber-300 font-bold">
-                [{wireWaypoints.length} waypoints | Right-click to undo]
-              </span>
-            )}
-          </span>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setWireStart(null);
-              setWireWaypoints([]);
-              setIsDraggingWire(false);
-              setHoveredPin(null);
-            }}
-            className="flex items-center gap-1 bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 border border-rose-500/50 px-2.5 py-0.5 rounded-full text-[11px] font-sans font-semibold transition cursor-pointer shrink-0"
-            title="Cancel Wire Connection (or press Esc)"
-          >
-            <X className="w-3.5 h-3.5" />
-            <span>Cancel</span>
-          </button>
-        </div>
-      )}
-
-      {/* Terminal Wire Color Popover (Appears on click & hold or right-click on any terminal) */}
-      {terminalColorMenu && (
-        <div
-          id="terminal-color-picker-popover"
-          style={{
-            left: Math.max(16, Math.min(window.innerWidth - 240, terminalColorMenu.clientX - 100)),
-            top: Math.max(16, Math.min(window.innerHeight - 200, terminalColorMenu.clientY - 120)),
-          }}
-          className="fixed z-50 bg-[#0f172a]/95 border-2 border-cyan-400 rounded-xl p-3 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 w-56 select-none"
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
-              <span className="text-xs font-mono font-bold text-white truncate max-w-[130px]">
-                {terminalColorMenu.pinName || terminalColorMenu.pinId}
-              </span>
-            </div>
-            <button
-              onClick={() => setTerminalColorMenu(null)}
-              className="text-slate-400 hover:text-white p-0.5 rounded hover:bg-slate-800 transition cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <p className="text-[10px] text-slate-300 mb-2 font-sans">
-            Choose wire color to connect from this terminal:
-          </p>
-          <div className="grid grid-cols-5 gap-2">
-            {STANDARD_WIRE_COLORS.map((c) => (
-              <button
-                key={c.value}
-                onClick={() => handleSelectTerminalColor(c.value)}
-                className={`w-7 h-7 rounded-full border-2 transition-all cursor-pointer flex items-center justify-center hover:scale-125 shadow-md ${
-                  wireColor === c.value
-                    ? 'ring-2 ring-cyan-300 ring-offset-2 ring-offset-slate-900 border-white'
-                    : 'border-slate-700 hover:border-white'
-                }`}
-                style={{ backgroundColor: c.value }}
-                title={c.label}
-              >
-                {wireColor === c.value && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-white shadow" />
-                )}
-              </button>
-            ))}
-          </div>
-          <div className="mt-2.5 pt-2 border-t border-slate-800 text-[9px] text-cyan-400/90 font-mono text-center">
-            Wire will start attached here
-          </div>
-        </div>
-      )}
-
-      {/* Connection Confirmation Toast */}
-      {connectionToast && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-emerald-950/95 border-2 border-emerald-400 px-4 py-1.5 rounded-full text-xs font-mono text-emerald-200 shadow-2xl backdrop-blur-md flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span>{connectionToast}</span>
-        </div>
-      )}
     </div>
   );
 };
@@ -2028,16 +2241,13 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             ? 'hover:scale-125 hover:z-30'
             : 'hover:scale-110'
         }`}
-        title={`${pin.name} (${pin.type || 'pin'}) - Click to wire | Click & hold or right-click for wire color`}
+        title={`${pin.name} (${pin.type || 'pin'}) - Click to wire`}
         onClick={(e) => {
           e.stopPropagation();
-          if (wireStartPin && (wireStartPin.compId !== comp.id || wireStartPin.pinId !== pin.id)) {
-            onPinMouseDown(e, comp, pin);
-          }
         }}
       >
-        {/* Hit target strictly within the terminal circle */}
-        <div className="absolute inset-0 rounded-full pointer-events-auto" />
+        {/* Generous hit target area (30px diameter) to make clicking and hovering terminals 100% reliable */}
+        <div className="absolute -inset-2.5 rounded-full pointer-events-auto z-10" />
 
         {/* Realistic ENIG Gold Annular Solder Pad with Drill Through-Hole */}
         <div
@@ -2172,6 +2382,28 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
     );
   }
 
+  // 2-POLE (DPST) PUSH BUTTON
+  if (comp.type === 'push-button-2pole') {
+    return (
+      <RealPushButton2Pole
+        comp={effectiveComp}
+        renderPin={renderPin}
+        onUpdateProperty={onUpdateProperty}
+      />
+    );
+  }
+
+  // 2-POLE (DPDT 6-PIN) PUSH BUTTON
+  if (comp.type === 'push-button-dpdt') {
+    return (
+      <RealPushButtonDpdt
+        comp={effectiveComp}
+        renderPin={renderPin}
+        onUpdateProperty={onUpdateProperty}
+      />
+    );
+  }
+
   // SUB-MINIATURE SPDT TOGGLE SWITCH
   if (comp.type === 'toggle-switch') {
     return (
@@ -2226,6 +2458,26 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
   // SOLDERLESS BREADBOARD (FULL & HALF MB-102)
   if (comp.type === 'breadboard-half' || comp.type === 'breadboard-full') {
     return <RealBreadboard comp={effectiveComp} renderPin={renderPin} />;
+  }
+
+  // 4-PAIR DUAL-ROW SCREW TERMINAL BLOCK
+  if (comp.type === 'terminal-block-dual-4p') {
+    return <RealScrewTerminalBlock comp={effectiveComp} renderPin={renderPin} onUpdateProperty={onUpdateProperty} />;
+  }
+
+  // 5-PORT LEVER WIRE CONNECTOR (WAGO 221)
+  if (comp.type === 'wire-connector-wago-5p') {
+    return <RealWagoConnector comp={effectiveComp} renderPin={renderPin} onUpdateProperty={onUpdateProperty} />;
+  }
+
+  // DUAL POWER DISTRIBUTION BUS (4 VCC / 4 GND PAIRS)
+  if (comp.type === 'power-distribution-bus') {
+    return <RealPowerDistributionBus comp={effectiveComp} renderPin={renderPin} onUpdateProperty={onUpdateProperty} />;
+  }
+
+  // 3-WAY T-TAP WIRE JUNCTION
+  if (comp.type === 'wire-tap-junction-3p') {
+    return <RealWireTapJunction comp={effectiveComp} renderPin={renderPin} onUpdateProperty={onUpdateProperty} />;
   }
 
   // ADJUSTABLE DC BENCH POWER SUPPLY (0-30V / 5A)

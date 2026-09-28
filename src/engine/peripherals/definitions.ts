@@ -119,6 +119,86 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
     }
   },
 
+  // --- Wire Connection Blocks & Multi-Pair Terminals ---
+  {
+    type: 'terminal-block-dual-4p',
+    name: '4-Pair Dual Terminal Block',
+    category: 'Connectors',
+    description: 'Dual-row barrier screw terminal strip with 4 independent connected pairs (1A-1B, 2A-2B, 3A-3B, 4A-4B) for multi-wire cable junctions.',
+    width: 120,
+    height: 95,
+    pins: [
+      { id: '1A', name: 'Pair 1 Left', label: '1A', type: 'passive', x: 18, y: 22 },
+      { id: '1B', name: 'Pair 1 Right', label: '1B', type: 'passive', x: 102, y: 22 },
+      { id: '2A', name: 'Pair 2 Left', label: '2A', type: 'passive', x: 18, y: 42 },
+      { id: '2B', name: 'Pair 2 Right', label: '2B', type: 'passive', x: 102, y: 42 },
+      { id: '3A', name: 'Pair 3 Left', label: '3A', type: 'passive', x: 18, y: 62 },
+      { id: '3B', name: 'Pair 3 Right', label: '3B', type: 'passive', x: 102, y: 62 },
+      { id: '4A', name: 'Pair 4 Left', label: '4A', type: 'passive', x: 18, y: 82 },
+      { id: '4B', name: 'Pair 4 Right', label: '4B', type: 'passive', x: 102, y: 82 },
+    ],
+    defaultProperties: {
+      label: 'TB-4P'
+    }
+  },
+  {
+    type: 'wire-connector-wago-5p',
+    name: '5-Port Lever Wire Connector (WAGO)',
+    category: 'Connectors',
+    description: '5-conductor WAGO-style lever wire splicing connector. All 5 ports share an internal common electrical bus for joining multiple wire pairs.',
+    width: 100,
+    height: 60,
+    pins: [
+      { id: 'P1', name: 'Port 1', label: '1', type: 'passive', x: 18, y: 46 },
+      { id: 'P2', name: 'Port 2', label: '2', type: 'passive', x: 34, y: 46 },
+      { id: 'P3', name: 'Port 3', label: '3', type: 'passive', x: 50, y: 46 },
+      { id: 'P4', name: 'Port 4', label: '4', type: 'passive', x: 66, y: 46 },
+      { id: 'P5', name: 'Port 5', label: '5', type: 'passive', x: 82, y: 46 },
+    ],
+    defaultProperties: {
+      label: 'WAGO-5'
+    }
+  },
+  {
+    type: 'power-distribution-bus',
+    name: 'Power Distribution Bus (4 Pairs)',
+    category: 'Connectors',
+    description: 'Dual-rail power distribution block with 4 Positive (VCC) and 4 Ground (GND) terminal pairs for clean branching across multiple devices.',
+    width: 130,
+    height: 75,
+    pins: [
+      // Positive Rail (VCC)
+      { id: 'VCC_1', name: 'VCC (+1)', label: '+1', type: 'passive', x: 22, y: 22 },
+      { id: 'VCC_2', name: 'VCC (+2)', label: '+2', type: 'passive', x: 52, y: 22 },
+      { id: 'VCC_3', name: 'VCC (+3)', label: '+3', type: 'passive', x: 82, y: 22 },
+      { id: 'VCC_4', name: 'VCC (+4)', label: '+4', type: 'passive', x: 110, y: 22 },
+      // Negative Rail (GND)
+      { id: 'GND_1', name: 'GND (-1)', label: '-1', type: 'passive', x: 22, y: 55 },
+      { id: 'GND_2', name: 'GND (-2)', label: '-2', type: 'passive', x: 52, y: 55 },
+      { id: 'GND_3', name: 'GND (-3)', label: '-3', type: 'passive', x: 82, y: 55 },
+      { id: 'GND_4', name: 'GND (-4)', label: '-4', type: 'passive', x: 110, y: 55 },
+    ],
+    defaultProperties: {
+      label: 'PWR-BUS'
+    }
+  },
+  {
+    type: 'wire-tap-junction-3p',
+    name: '3-Way T-Tap Wire Junction',
+    category: 'Connectors',
+    description: '3-terminal wire tap and branching node for splicing an incoming line out to multiple component pairs.',
+    width: 70,
+    height: 55,
+    pins: [
+      { id: 'IN', name: 'Line In', label: 'IN', type: 'passive', x: 35, y: 15 },
+      { id: 'OUT1', name: 'Branch 1', label: 'B1', type: 'passive', x: 20, y: 42 },
+      { id: 'OUT2', name: 'Branch 2', label: 'B2', type: 'passive', x: 50, y: 42 },
+    ],
+    defaultProperties: {
+      label: 'T-TAP'
+    }
+  },
+
   // --- LEDs ---
   {
     type: 'led',
@@ -350,6 +430,46 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
       isPressed: false,
       isLatching: false,
       label: 'BTN1'
+    }
+  },
+  {
+    type: 'push-button-2pole',
+    name: '2-Pole Push Button (DPST)',
+    category: 'Buttons',
+    description: 'Double Pole Single Throw (DPST) push button controlling 2 completely isolated circuits simultaneously.',
+    width: 76,
+    height: 70,
+    pins: [
+      { id: '1A', name: 'Pole 1 Terminal A', label: '1A', type: 'passive', x: 12, y: 18 },
+      { id: '1B', name: 'Pole 1 Terminal B', label: '1B', type: 'passive', x: 64, y: 18 },
+      { id: '2A', name: 'Pole 2 Terminal A', label: '2A', type: 'passive', x: 12, y: 52 },
+      { id: '2B', name: 'Pole 2 Terminal B', label: '2B', type: 'passive', x: 64, y: 52 },
+    ],
+    defaultProperties: {
+      isPressed: false,
+      isLatching: false,
+      label: 'PB-DP1'
+    }
+  },
+  {
+    type: 'push-button-dpdt',
+    name: '2-Pole Push Button (DPDT 6-Pin)',
+    category: 'Buttons',
+    description: 'Double Pole Double Throw (DPDT) push button with 6 terminals (Pole 1 NC/COM/NO and Pole 2 NC/COM/NO).',
+    width: 90,
+    height: 72,
+    pins: [
+      { id: '1NC', name: 'Pole 1 NC', label: '1NC', type: 'passive', x: 15, y: 16 },
+      { id: '1COM', name: 'Pole 1 COM', label: '1COM', type: 'passive', x: 45, y: 16 },
+      { id: '1NO', name: 'Pole 1 NO', label: '1NO', type: 'passive', x: 75, y: 16 },
+      { id: '2NC', name: 'Pole 2 NC', label: '2NC', type: 'passive', x: 15, y: 56 },
+      { id: '2COM', name: 'Pole 2 COM', label: '2COM', type: 'passive', x: 45, y: 56 },
+      { id: '2NO', name: 'Pole 2 NO', label: '2NO', type: 'passive', x: 75, y: 56 },
+    ],
+    defaultProperties: {
+      isPressed: false,
+      isLatching: false,
+      label: 'PB-DPDT'
     }
   },
   {

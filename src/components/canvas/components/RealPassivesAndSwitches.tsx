@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { CircuitComponent, PinDef } from '../../../types';
 import { COMPONENT_CATALOG } from '../../../engine/peripherals/definitions';
+import { soundEngine } from '../../../engine/audio';
 
 interface CompProps {
   comp: CircuitComponent;
@@ -382,34 +383,118 @@ export const RealPolyesterCapacitor: React.FC<CompProps> = ({ comp, renderPin })
 // --- 4. REALISTIC 6MM TACTILE PUSH BUTTON ---
 export const RealPushButton: React.FC<CompProps> = ({ comp, renderPin, onUpdateProperty }) => {
   const props = comp.properties || {};
-  const isPressed = !!props.isPressed;
+  const isPressed = Boolean(props.isPressed);
+  const isLatching = Boolean(props.isLatching);
   const btnPins = COMPONENT_CATALOG.find((c) => c.type === 'push-button')?.pins || [];
+
+  const handlePressDown = (e: React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation();
+    if (isLatching) return; // In latching mode, state toggles on click
+    onUpdateProperty?.(comp.id, 'isPressed', true);
+    try {
+      soundEngine.playRelayClick(false);
+    } catch (_) {}
+  };
+
+  const handlePressUp = (e: React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation();
+    if (isLatching) return;
+    onUpdateProperty?.(comp.id, 'isPressed', false);
+    try {
+      soundEngine.playRelayClick(true);
+    } catch (_) {}
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isLatching) {
+      // Toggle mode if locking is active
+      const next = !isPressed;
+      onUpdateProperty?.(comp.id, 'isPressed', next);
+      try {
+        soundEngine.playRelayClick(!next);
+      } catch (_) {}
+    } else {
+      // For momentary button, ensure it returns to OFF immediately
+      onUpdateProperty?.(comp.id, 'isPressed', false);
+    }
+  };
+
+  const toggleLatchingMode = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextLatch = !isLatching;
+    onUpdateProperty?.(comp.id, 'isLatching', nextLatch);
+    if (!nextLatch) {
+      // If switching back to momentary mode, reset to OFF
+      onUpdateProperty?.(comp.id, 'isPressed', false);
+    }
+  };
 
   return (
     <div
-      className="relative w-16 h-16 select-none flex items-center justify-center font-mono cursor-pointer"
-      onMouseDown={() => onUpdateProperty?.(comp.id, 'isPressed', true)}
-      onMouseUp={() => onUpdateProperty?.(comp.id, 'isPressed', false)}
-      onTouchStart={() => onUpdateProperty?.(comp.id, 'isPressed', true)}
-      onTouchEnd={() => onUpdateProperty?.(comp.id, 'isPressed', false)}
+      className="relative w-18 h-18 select-none flex items-center justify-center font-mono"
+      title={`${props.label || 'Push Button'} (${isLatching ? 'Latching Mode' : 'Momentary Mode: Hold to connect, release to open'})`}
     >
       {/* Stainless Steel Square Top Bracket with 4 Corner Swage Rivets */}
-      <div className="w-13 h-13 rounded-md bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 border border-slate-100 shadow-[0_4px_12px_rgba(0,0,0,0.5)] p-1.5 flex items-center justify-center relative">
+      <div className="w-14 h-14 rounded-md bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 border border-slate-100 shadow-[0_4px_12px_rgba(0,0,0,0.5)] p-1.5 flex flex-col items-center justify-center relative">
         {/* 4 Corner Rivets */}
         <div className="absolute top-1 left-1 w-1.5 h-1.5 rounded-full bg-slate-500 border border-slate-300 shadow-inner" />
         <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-slate-500 border border-slate-300 shadow-inner" />
         <div className="absolute bottom-1 left-1 w-1.5 h-1.5 rounded-full bg-slate-500 border border-slate-300 shadow-inner" />
         <div className="absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-slate-500 border border-slate-300 shadow-inner" />
 
+        {/* Latch / Momentary Mode Button on top-center */}
+        <button
+          type="button"
+          onClick={toggleLatchingMode}
+          className={`absolute top-0.5 z-20 text-[6.5px] px-1 py-0.2 rounded font-black tracking-tighter uppercase transition-colors cursor-pointer border ${
+            isLatching
+              ? 'bg-amber-500/90 text-amber-950 border-amber-600 shadow-[0_0_4px_#f59e0b]'
+              : 'bg-slate-700/80 text-slate-300 border-slate-600 hover:bg-slate-600'
+          }`}
+          title={isLatching ? 'Mode: LATCH (Stays on when clicked)' : 'Mode: MOMENTARY (Press to ON, release to OFF)'}
+        >
+          {isLatching ? 'LOCK' : 'MOM'}
+        </button>
+
         {/* Central Circular Plunger (Black/Red Tactile Actuator) */}
         <div
-          className={`w-7 h-7 rounded-full border-2 transition-transform duration-75 flex items-center justify-center shadow-md ${
+          role="button"
+          tabIndex={0}
+          onClick={handleClick}
+          onMouseDown={handlePressDown}
+          onMouseUp={handlePressUp}
+          onMouseLeave={handlePressUp}
+          onTouchStart={handlePressDown}
+          onTouchEnd={handlePressUp}
+          onTouchCancel={handlePressUp}
+          className={`relative z-10 w-8 h-8 rounded-full border-2 transition-all duration-75 flex items-center justify-center cursor-pointer ${
             isPressed
-              ? 'scale-90 bg-rose-700 border-rose-900 shadow-inner'
-              : 'bg-gradient-to-b from-rose-500 to-rose-600 border-rose-400 hover:brightness-105'
+              ? 'scale-90 bg-rose-700 border-rose-950 shadow-[inset_0_3px_6px_rgba(0,0,0,0.8)] ring-2 ring-emerald-400/80'
+              : 'bg-gradient-to-b from-rose-500 to-rose-600 border-rose-400 hover:brightness-110 shadow-md active:scale-95'
           }`}
+          title={isLatching ? 'Click to toggle ON / OFF' : 'Press to ON, Release to OFF'}
         >
-          <div className="w-2.5 h-2.5 rounded-full bg-rose-400/40 shadow-inner" />
+          {/* Inner plunger button dome */}
+          <div className={`w-3.5 h-3.5 rounded-full ${isPressed ? 'bg-rose-900 shadow-inner' : 'bg-rose-400/50 shadow-inner'}`} />
+          {/* Active Contact Indicator Dot */}
+          {isPressed && (
+            <div className="absolute inset-0 rounded-full flex items-center justify-center">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 shadow-[0_0_6px_#34d399] animate-pulse" />
+            </div>
+          )}
+        </div>
+
+        {/* Status Silkscreen at bottom */}
+        <div className="absolute bottom-0.5 flex items-center gap-1 z-10">
+          <span
+            className={`w-1.5 h-1.5 rounded-full transition-all ${
+              isPressed ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]' : 'bg-slate-600'
+            }`}
+          />
+          <span className="text-[6.5px] font-bold text-slate-700">
+            {isPressed ? 'ON' : 'OFF'}
+          </span>
         </div>
       </div>
 
@@ -419,6 +504,258 @@ export const RealPushButton: React.FC<CompProps> = ({ comp, renderPin, onUpdateP
           left: pin.x - 7,
           top: pin.y - 7,
           labelPos: 'none',
+        })
+      )}
+    </div>
+  );
+};
+
+// --- 4B. REALISTIC 2-POLE (DPST) PUSH BUTTON ---
+export const RealPushButton2Pole: React.FC<CompProps> = ({ comp, renderPin, onUpdateProperty }) => {
+  const props = comp.properties || {};
+  const isPressed = Boolean(props.isPressed);
+  const isLatching = Boolean(props.isLatching);
+  const btnPins = COMPONENT_CATALOG.find((c) => c.type === 'push-button-2pole')?.pins || [];
+
+  const handlePressDown = (e: React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation();
+    if (isLatching) return;
+    onUpdateProperty?.(comp.id, 'isPressed', true);
+    try {
+      soundEngine.playRelayClick(false);
+    } catch (_) {}
+  };
+
+  const handlePressUp = (e: React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation();
+    if (isLatching) return;
+    onUpdateProperty?.(comp.id, 'isPressed', false);
+    try {
+      soundEngine.playRelayClick(true);
+    } catch (_) {}
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isLatching) {
+      const next = !isPressed;
+      onUpdateProperty?.(comp.id, 'isPressed', next);
+      try {
+        soundEngine.playRelayClick(!next);
+      } catch (_) {}
+    } else {
+      onUpdateProperty?.(comp.id, 'isPressed', false);
+    }
+  };
+
+  const toggleLatchingMode = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextLatch = !isLatching;
+    onUpdateProperty?.(comp.id, 'isLatching', nextLatch);
+    if (!nextLatch) {
+      onUpdateProperty?.(comp.id, 'isPressed', false);
+    }
+  };
+
+  return (
+    <div
+      className="relative w-19 h-18 select-none flex items-center justify-center font-mono"
+      title={`${props.label || '2-Pole Push Button (DPST)'} - Controls 2 isolated poles simultaneously (${isLatching ? 'Latching Mode' : 'Momentary Mode'})`}
+    >
+      {/* Heavy-duty Industrial / Appliance Dual-Pole Metal Casing */}
+      <div className="w-16 h-15 rounded-lg bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 border border-slate-100 shadow-[0_4px_14px_rgba(0,0,0,0.55)] p-1.5 flex flex-col items-center justify-between relative overflow-hidden">
+        {/* Corner Rivets */}
+        <div className="absolute top-1 left-1 w-1.5 h-1.5 rounded-full bg-slate-500 border border-slate-300 shadow-inner" />
+        <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-slate-500 border border-slate-300 shadow-inner" />
+        <div className="absolute bottom-1 left-1 w-1.5 h-1.5 rounded-full bg-slate-500 border border-slate-300 shadow-inner" />
+        <div className="absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-slate-500 border border-slate-300 shadow-inner" />
+
+        {/* Top Silkscreen - Pole 1 Status */}
+        <div className="w-full flex items-center justify-between px-1 z-10 text-[6.5px] font-bold">
+          <span className="text-slate-800">POLE 1 (1A-1B)</span>
+          <span className={`w-1.5 h-1.5 rounded-full transition-all ${isPressed ? 'bg-emerald-500 shadow-[0_0_5px_#10b981]' : 'bg-slate-500'}`} />
+        </div>
+
+        {/* Central Plunger & Mode Switch */}
+        <div className="flex items-center justify-center gap-2 z-10 my-0.5">
+          {/* Latch / Momentary Mode Button */}
+          <button
+            type="button"
+            onClick={toggleLatchingMode}
+            className={`text-[6px] px-1 py-0.2 rounded font-black tracking-tighter uppercase transition-colors cursor-pointer border ${
+              isLatching
+                ? 'bg-amber-500/90 text-amber-950 border-amber-600 shadow-[0_0_4px_#f59e0b]'
+                : 'bg-slate-700/80 text-slate-300 border-slate-600 hover:bg-slate-600'
+            }`}
+            title={isLatching ? 'Mode: LATCH (Stays on when clicked)' : 'Mode: MOMENTARY (Press to ON, release to OFF)'}
+          >
+            {isLatching ? 'LOCK' : 'MOM'}
+          </button>
+
+          {/* Central Circular Cobalt-Blue Plunger */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={handleClick}
+            onMouseDown={handlePressDown}
+            onMouseUp={handlePressUp}
+            onMouseLeave={handlePressUp}
+            onTouchStart={handlePressDown}
+            onTouchEnd={handlePressUp}
+            onTouchCancel={handlePressUp}
+            className={`relative w-8 h-8 rounded-full border-2 transition-all duration-75 flex items-center justify-center cursor-pointer ${
+              isPressed
+                ? 'scale-90 bg-blue-800 border-blue-950 shadow-[inset_0_3px_6px_rgba(0,0,0,0.8)] ring-2 ring-emerald-400/80'
+                : 'bg-gradient-to-b from-blue-500 to-blue-600 border-blue-400 hover:brightness-110 shadow-md active:scale-95'
+            }`}
+            title={isLatching ? '2-Pole Button: Click to toggle both poles ON / OFF' : '2-Pole Button: Hold to bridge both poles, release to open'}
+          >
+            <div className={`w-3.5 h-3.5 rounded-full ${isPressed ? 'bg-blue-950 shadow-inner' : 'bg-blue-400/50 shadow-inner'}`} />
+            {isPressed && (
+              <div className="absolute inset-0 rounded-full flex items-center justify-center">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 shadow-[0_0_6px_#34d399] animate-pulse" />
+              </div>
+            )}
+          </div>
+
+          <div className="text-[6.5px] font-black text-slate-700 flex flex-col items-center">
+            <span>2-POLE</span>
+            <span className={isPressed ? 'text-emerald-700' : 'text-slate-500'}>{isPressed ? 'CLOSED' : 'OPEN'}</span>
+          </div>
+        </div>
+
+        {/* Galvanic Isolation Barrier Silkscreen (dashed line across center) */}
+        <div className="absolute top-1/2 left-2 right-2 -translate-y-1/2 border-b border-dashed border-slate-400/60 pointer-events-none" />
+
+        {/* Bottom Silkscreen - Pole 2 Status */}
+        <div className="w-full flex items-center justify-between px-1 z-10 text-[6.5px] font-bold">
+          <span className="text-slate-800">POLE 2 (2A-2B)</span>
+          <span className={`w-1.5 h-1.5 rounded-full transition-all ${isPressed ? 'bg-emerald-500 shadow-[0_0_5px_#10b981]' : 'bg-slate-500'}`} />
+        </div>
+      </div>
+
+      {/* 4 Terminals (Left 1A, 2A; Right 1B, 2B) */}
+      {btnPins.map((pin) =>
+        renderPin(pin, {
+          left: pin.x - 7,
+          top: pin.y - 7,
+          labelPos: pin.x < 38 ? 'left' : 'right',
+        })
+      )}
+    </div>
+  );
+};
+
+// --- 4C. REALISTIC 2-POLE 6-PIN (DPDT) PUSH BUTTON ---
+export const RealPushButtonDpdt: React.FC<CompProps> = ({ comp, renderPin, onUpdateProperty }) => {
+  const props = comp.properties || {};
+  const isPressed = Boolean(props.isPressed);
+  const isLatching = Boolean(props.isLatching);
+  const btnPins = COMPONENT_CATALOG.find((c) => c.type === 'push-button-dpdt')?.pins || [];
+
+  const handlePressDown = (e: React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation();
+    if (isLatching) return;
+    onUpdateProperty?.(comp.id, 'isPressed', true);
+    try {
+      soundEngine.playRelayClick(false);
+    } catch (_) {}
+  };
+
+  const handlePressUp = (e: React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation();
+    if (isLatching) return;
+    onUpdateProperty?.(comp.id, 'isPressed', false);
+    try {
+      soundEngine.playRelayClick(true);
+    } catch (_) {}
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isLatching) {
+      const next = !isPressed;
+      onUpdateProperty?.(comp.id, 'isPressed', next);
+      try {
+        soundEngine.playRelayClick(!next);
+      } catch (_) {}
+    } else {
+      onUpdateProperty?.(comp.id, 'isPressed', false);
+    }
+  };
+
+  const toggleLatchingMode = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextLatch = !isLatching;
+    onUpdateProperty?.(comp.id, 'isLatching', nextLatch);
+    if (!nextLatch) {
+      onUpdateProperty?.(comp.id, 'isPressed', false);
+    }
+  };
+
+  return (
+    <div
+      className="relative w-23 h-18 select-none flex items-center justify-center font-mono"
+      title={`${props.label || '2-Pole Push Button (DPDT 6-Pin)'} - 2 isolated changeover poles (${isLatching ? 'Latching' : 'Momentary'})`}
+    >
+      <div className="w-20 h-15 rounded-lg bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 border border-slate-100 shadow-[0_4px_14px_rgba(0,0,0,0.55)] p-1.5 flex flex-col items-center justify-between relative overflow-hidden">
+        {/* Top Silkscreen - Pole 1 */}
+        <div className="w-full flex items-center justify-between px-1 z-10 text-[6px] font-bold text-slate-800">
+          <span>P1: NC</span>
+          <span className={!isPressed ? 'text-emerald-700 font-black' : 'text-slate-500'}>COM</span>
+          <span className={isPressed ? 'text-emerald-700 font-black' : 'text-slate-500'}>NO</span>
+        </div>
+
+        {/* Center Plunger & Mode */}
+        <div className="flex items-center justify-center gap-2 z-10 my-0.5">
+          <button
+            type="button"
+            onClick={toggleLatchingMode}
+            className={`text-[5.5px] px-1 py-0.2 rounded font-black tracking-tighter uppercase transition-colors cursor-pointer border ${
+              isLatching
+                ? 'bg-amber-500/90 text-amber-950 border-amber-600'
+                : 'bg-slate-700/80 text-slate-300 border-slate-600'
+            }`}
+          >
+            {isLatching ? 'LOCK' : 'MOM'}
+          </button>
+
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={handleClick}
+            onMouseDown={handlePressDown}
+            onMouseUp={handlePressUp}
+            onMouseLeave={handlePressUp}
+            onTouchStart={handlePressDown}
+            onTouchEnd={handlePressUp}
+            onTouchCancel={handlePressUp}
+            className={`relative w-7 h-7 rounded-full border-2 transition-all duration-75 flex items-center justify-center cursor-pointer ${
+              isPressed
+                ? 'scale-90 bg-emerald-700 border-emerald-950 shadow-[inset_0_3px_6px_rgba(0,0,0,0.8)] ring-2 ring-cyan-400'
+                : 'bg-gradient-to-b from-emerald-500 to-emerald-600 border-emerald-400 hover:brightness-110 shadow-md active:scale-95'
+            }`}
+          >
+            <div className={`w-3 h-3 rounded-full ${isPressed ? 'bg-emerald-950' : 'bg-emerald-400/50'}`} />
+          </div>
+
+          <span className="text-[6px] font-bold text-slate-700">DPDT</span>
+        </div>
+
+        {/* Bottom Silkscreen - Pole 2 */}
+        <div className="w-full flex items-center justify-between px-1 z-10 text-[6px] font-bold text-slate-800">
+          <span>P2: NC</span>
+          <span className={!isPressed ? 'text-emerald-700 font-black' : 'text-slate-500'}>COM</span>
+          <span className={isPressed ? 'text-emerald-700 font-black' : 'text-slate-500'}>NO</span>
+        </div>
+      </div>
+
+      {/* 6 Terminals */}
+      {btnPins.map((pin) =>
+        renderPin(pin, {
+          left: pin.x - 7,
+          top: pin.y - 7,
+          labelPos: pin.y < 36 ? 'top' : 'bottom',
         })
       )}
     </div>

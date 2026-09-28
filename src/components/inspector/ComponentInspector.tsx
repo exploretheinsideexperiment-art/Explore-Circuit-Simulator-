@@ -196,22 +196,83 @@ export const ComponentInspector: React.FC<ComponentInspectorProps> = ({
           <span>Interactive Runtime Controls</span>
         </div>
 
-        {/* Push button interaction */}
-        {selectedComponent.type === 'push-button' && (
+        {/* Push button interaction (1-Pole, 2-Pole DPST, 2-Pole DPDT) */}
+        {(selectedComponent.type === 'push-button' ||
+          selectedComponent.type === 'push-button-2pole' ||
+          selectedComponent.type === 'push-button-dpdt') && (
           <div className="space-y-2">
             <button
               onMouseDown={() => onUpdateProperties(selectedComponent.id, { isPressed: true })}
               onMouseUp={() => onUpdateProperties(selectedComponent.id, { isPressed: false })}
               onTouchStart={() => onUpdateProperties(selectedComponent.id, { isPressed: true })}
               onTouchEnd={() => onUpdateProperties(selectedComponent.id, { isPressed: false })}
-              className={`w-full py-2.5 rounded-lg font-bold text-xs shadow-md transition active:scale-95 ${
+              className={`w-full py-2.5 rounded-lg font-bold text-xs shadow-md transition active:scale-95 cursor-pointer ${
                 selectedComponent.properties?.isPressed
-                  ? 'bg-emerald-500 text-slate-950'
+                  ? 'bg-emerald-500 text-slate-950 ring-2 ring-emerald-400'
                   : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
               }`}
             >
-              {selectedComponent.properties?.isPressed ? 'PRESSED (CONNECTED)' : 'CLICK & HOLD TO PRESS'}
+              {selectedComponent.properties?.isPressed ? 'PRESSED (CLOSED)' : 'CLICK & HOLD TO PRESS'}
             </button>
+
+            {/* Mode switch: Momentary vs Latching */}
+            <div className="flex items-center justify-between bg-slate-900/80 px-2 py-1.5 rounded border border-slate-800 text-xs">
+              <span className="text-slate-400 font-mono">Action Mode:</span>
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateProperties(selectedComponent.id, {
+                    isLatching: !selectedComponent.properties?.isLatching,
+                    isPressed: false,
+                  })
+                }
+                className={`px-2 py-0.5 rounded text-[11px] font-bold font-mono transition cursor-pointer border ${
+                  selectedComponent.properties?.isLatching
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                    : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
+                }`}
+              >
+                {selectedComponent.properties?.isLatching ? 'LATCHING (LOCK)' : 'MOMENTARY (PUSH)'}
+              </button>
+            </div>
+
+            {/* Specific 2-Pole Status Indicator */}
+            {selectedComponent.type === 'push-button-2pole' && (
+              <div className="bg-slate-900/90 p-2 rounded-lg border border-slate-800 text-[11px] font-mono space-y-1">
+                <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Dual Pole Status</div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-300">Pole 1 (1A ↔ 1B):</span>
+                  <span className={`font-bold ${selectedComponent.properties?.isPressed ? 'text-emerald-400' : 'text-slate-500'}`}>
+                    {selectedComponent.properties?.isPressed ? 'CLOSED (ON)' : 'OPEN (OFF)'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-300">Pole 2 (2A ↔ 2B):</span>
+                  <span className={`font-bold ${selectedComponent.properties?.isPressed ? 'text-emerald-400' : 'text-slate-500'}`}>
+                    {selectedComponent.properties?.isPressed ? 'CLOSED (ON)' : 'OPEN (OFF)'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* DPDT 6-Pin Status Indicator */}
+            {selectedComponent.type === 'push-button-dpdt' && (
+              <div className="bg-slate-900/90 p-2 rounded-lg border border-slate-800 text-[11px] font-mono space-y-1">
+                <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">DPDT Contact State</div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-300">Pole 1:</span>
+                  <span className="text-emerald-400 font-bold">
+                    {selectedComponent.properties?.isPressed ? '1COM ↔ 1NO' : '1COM ↔ 1NC'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-300">Pole 2:</span>
+                  <span className="text-emerald-400 font-bold">
+                    {selectedComponent.properties?.isPressed ? '2COM ↔ 2NO' : '2COM ↔ 2NC'}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

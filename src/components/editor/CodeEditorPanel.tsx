@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Code, Terminal, Activity, AlertTriangle, Play, Check, 
   Trash2, Send, ChevronDown, ChevronUp, Copy, Sparkles, Clock,
-  Zap, Square, Loader2
+  Zap, Square, Loader2, Cable
 } from 'lucide-react';
 import { SerialMessage, ElectricalWarning } from '../../types';
 import { HighlightedCodeEditor } from './HighlightedCodeEditor';
@@ -24,6 +24,7 @@ interface CodeEditorPanelProps {
   isCompiling?: boolean;
   isSimulating: boolean;
   onAskAI: (prompt: string) => void;
+  onSwitchToWiring?: () => void;
 }
 
 export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
@@ -43,6 +44,7 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
   isCompiling = false,
   isSimulating,
   onAskAI,
+  onSwitchToWiring,
 }) => {
   const [activeTab, setActiveTab] = useState<'editor' | 'serial' | 'plotter' | 'erc'>('editor');
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -96,6 +98,18 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
       {/* Panel Tab Header */}
       <div className="h-10 bg-[#080c18] border-b border-slate-800 px-3 flex items-center justify-between select-none">
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          {/* Wire Connection & Live Messages Tab */}
+          {onSwitchToWiring && (
+            <button
+              onClick={onSwitchToWiring}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-medium rounded-t transition cursor-pointer shrink-0 text-slate-400 hover:text-cyan-300 hover:bg-slate-900/60"
+              title="Switch to Wire Connection & Live Guidance panel"
+            >
+              <Cable className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Wire Connection</span>
+            </button>
+          )}
+
           {/* Main sketch.ino Tab */}
           <button
             onClick={() => {

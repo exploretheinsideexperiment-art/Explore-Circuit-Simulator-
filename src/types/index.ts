@@ -149,3 +149,26 @@ export interface MCUState {
 }
 
 export type ViewMode = 'breadboard' | 'schematic';
+
+export interface LiveWiringStatus {
+  isWiring: boolean;
+  sourceCompId?: string;
+  sourcePinId?: string;
+  sourcePinName?: string;
+  sourceCompName?: string;
+  sourcePinType?: string;
+  sourceVoltage?: number;
+  targetCompId?: string;
+  targetPinId?: string;
+  targetPinName?: string;
+  targetCompName?: string;
+  targetPinType?: string;
+  targetVoltage?: number;
+  hoveredWireId?: string;
+  isWireTap?: boolean;
+  waypointCount: number;
+  activeMessage?: string;
+  lastConnectionMessage?: string | null;
+  wireColor: string;
+  timestamp?: number;
+}

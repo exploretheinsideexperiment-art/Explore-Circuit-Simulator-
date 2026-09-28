@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   CircuitComponent, Wire, ViewMode, ComponentTemplate, 
-  SerialMessage, ElectricalWarning, ProjectData 
+  SerialMessage, ElectricalWarning, ProjectData, LiveWiringStatus 
 } from './types';
 import { COMPONENT_CATALOG } from './engine/peripherals/definitions';
 import { SUPPORTED_BOARDS } from './engine/mcu/boards';
@@ -17,6 +17,7 @@ import { ComponentLibrary } from './components/sidebar/ComponentLibrary';
 import { ComponentInspector } from './components/inspector/ComponentInspector';
 import { CircuitCanvas } from './components/canvas/CircuitCanvas';
 import { CodeEditorPanel } from './components/editor/CodeEditorPanel';
+import { WiringAssistantPanel } from './components/editor/WiringAssistantPanel';
 import { AIAssistantModal } from './components/modals/AIAssistantModal';
 import { ExamplesModal } from './components/modals/ExamplesModal';
 import { ProjectManagerModal } from './components/modals/ProjectManagerModal';
@@ -377,11 +378,49 @@ void loop() {
     runCircuitSolver();
   };
 
+  // Selected component reference
+  const selectedComponent = components.find((c) => c.id === selectedCompId) || null;
+
+  // Helper to determine if a component is an MCU board (Arduino, ESP32, Raspberry Pi)
+  const isMcuBoard = useCallback((comp: CircuitComponent | null | undefined): boolean => {
+    if (!comp) return false;
+    return (
+      comp.type.startsWith('mcu-') ||
+      comp.type.includes('esp32') ||
+      comp.type.includes('arduino') ||
+      comp.type.includes('raspberry') ||
+      comp.type.includes('pico')
+    );
+  }, []);
+
   // Active board identification
-  const activeMcu = components.find((c) => c.type.startsWith('mcu-'));
+  const activeMcu = components.find(isMcuBoard);
+  const hasMcuBoard = Boolean(activeMcu);
   const activeBoardId = activeMcu?.properties?.boardId || targetBoard || 'esp32-devkit-v1';
   const activeBoardSpec = SUPPORTED_BOARDS[activeBoardId];
   const targetBoardName = activeBoardSpec?.name || 'ESP32 DevKit';
+
+  // Bottom Panel Mode: 'wiring' (default) or 'code' (when MCU board is selected)
+  const [bottomPanelMode, setBottomPanelMode] = useState<'wiring' | 'code'>('wiring');
+  const [liveWiringStatus, setLiveWiringStatus] = useState<LiveWiringStatus | null>(null);
+
+  // Automatically switch between Code Editor and Wire Connection Guide based on selection:
+  // When an Arduino, ESP32, or Raspberry Pi board is selected: open Code Editor
+  // Otherwise (non-MCU selected or deselected): default back to Wire Connection
+  useEffect(() => {
+    if (selectedComponent && isMcuBoard(selectedComponent)) {
+      setBottomPanelMode('code');
+    } else if (selectedComponent && !isMcuBoard(selectedComponent)) {
+      setBottomPanelMode('wiring');
+    }
+  }, [selectedCompId, selectedComponent, isMcuBoard]);
+
+  // When active wiring starts on canvas, switch immediately to wiring assistant to display live connection messages
+  useEffect(() => {
+    if (liveWiringStatus?.isWiring) {
+      setBottomPanelMode('wiring');
+    }
+  }, [liveWiringStatus?.isWiring]);
 
   // Compile and upload to Microcontroller (Starts execution live)
   const handleCompileAndUpload = useCallback(() => {
@@ -607,17 +646,20 @@ void loop() {
     color: string,
     waypoints?: { x: number; y: number }[]
   ) => {
-    // Avoid duplicate wire between same two pins
+    // Avoid duplicate direct wire between exact same two pins without custom routing/branching
+    const hasWaypoints = waypoints && waypoints.length > 0;
     const exists = wires.some(
       (w) =>
-        (w.fromCompId === fromCompId &&
+        !hasWaypoints &&
+        (!w.waypoints || w.waypoints.length === 0) &&
+        ((w.fromCompId === fromCompId &&
           w.fromPinId === fromPinId &&
           w.toCompId === toCompId &&
           w.toPinId === toPinId) ||
         (w.fromCompId === toCompId &&
           w.fromPinId === toPinId &&
           w.toCompId === fromCompId &&
-          w.toPinId === fromPinId)
+          w.toPinId === fromPinId))
     );
     if (exists) return;
 
@@ -753,8 +795,6 @@ void loop() {
     setSerialMessages([]);
   };
 
-  const selectedComponent = components.find((c) => c.id === selectedCompId) || null;
-
   const handleUpdateWireColor = (newColor: string) => {
     setWireColor(newColor);
     if (selectedWireId) {
@@ -865,6 +905,7 @@ void loop() {
             externalWireStart={externalWireStart}
             onClearExternalWireStart={() => setExternalWireStart(null)}
             onWireStartChange={setActiveWiringPin}
+            onLiveWiringChange={setLiveWiringStatus}
             zoom={zoom}
             pan={pan}
             showGrid={showGrid}
@@ -878,24 +919,45 @@ void loop() {
             isPaused={isPaused}
           />
 
-          {/* Bottom Code Editor & Serial Monitor Panel */}
-          <CodeEditorPanel
-            code={code}
-            onChangeCode={setCode}
-            language={language}
-            onChangeLanguage={setLanguage}
-            serialMessages={serialMessages}
-            onClearSerial={() => setSerialMessages([])}
-            onSendSerial={(text) => mcuRef.current?.injectSerialInput(text)}
-            warnings={warnings}
-            onCompileAndUpload={handleCompileAndUpload}
-            onVerify={handleVerifySketch}
-            onStopSimulation={handleStop}
-            targetBoardName={targetBoardName}
-            isCompiling={isCompiling}
-            isSimulating={isRunning}
-            onAskAI={() => setIsAIModalOpen(true)}
-          />
+          {/* Bottom Panel: Wire Connection Assistant (Default / Wiring) or Code Editor (when ESP32, Arduino, Raspberry Pi is selected) */}
+          {bottomPanelMode === 'code' && hasMcuBoard ? (
+            <CodeEditorPanel
+              code={code}
+              onChangeCode={setCode}
+              language={language}
+              onChangeLanguage={setLanguage}
+              serialMessages={serialMessages}
+              onClearSerial={() => setSerialMessages([])}
+              onSendSerial={(text) => mcuRef.current?.injectSerialInput(text)}
+              warnings={warnings}
+              onCompileAndUpload={handleCompileAndUpload}
+              onVerify={handleVerifySketch}
+              onStopSimulation={handleStop}
+              targetBoardName={targetBoardName}
+              isCompiling={isCompiling}
+              isSimulating={isRunning}
+              onAskAI={() => setIsAIModalOpen(true)}
+              onSwitchToWiring={() => setBottomPanelMode('wiring')}
+            />
+          ) : (
+            <WiringAssistantPanel
+              wires={wires}
+              components={components}
+              liveWiring={liveWiringStatus}
+              wireColor={wireColor}
+              onChangeWireColor={handleUpdateWireColor}
+              onCancelWire={() => {
+                setActiveWiringPin(null);
+                setExternalWireStart(null);
+                window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+              }}
+              onDeleteWire={handleDeleteWire}
+              onClearWires={() => setWires([])}
+              onSwitchToCodeEditor={() => setBottomPanelMode('code')}
+              hasMcuBoard={hasMcuBoard}
+              targetBoardName={targetBoardName}
+            />
+          )}
         </div>
 
         {/* Right Inspector & Live Properties Drawer (opens on double-click / double-tap) */}

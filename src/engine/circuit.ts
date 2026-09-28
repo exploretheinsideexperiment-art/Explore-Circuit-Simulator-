@@ -293,14 +293,64 @@ export function evaluateCircuit(
   // Add internal component continuity (e.g. tactile switch closed, relay closed, potentiometer, resistor)
   for (const comp of components) {
     if (comp.type === 'push-button') {
-      const isPressed = comp.properties?.isPressed;
+      const isPressed = Boolean(comp.properties?.isPressed);
       // Terminals 1A and 1B are permanently linked; 2A and 2B are permanently linked
       addEdge(makePinKey(comp.id, '1A'), makePinKey(comp.id, '1B'));
       addEdge(makePinKey(comp.id, '2A'), makePinKey(comp.id, '2B'));
       if (isPressed) {
-        // Switch makes contact between row 1 and row 2
+        // Switch makes full contact between row 1 and row 2 across all 4 terminals
         addEdge(makePinKey(comp.id, '1A'), makePinKey(comp.id, '2A'));
+        addEdge(makePinKey(comp.id, '1B'), makePinKey(comp.id, '2B'));
+        addEdge(makePinKey(comp.id, '1A'), makePinKey(comp.id, '2B'));
+        addEdge(makePinKey(comp.id, '1B'), makePinKey(comp.id, '2A'));
       }
+    } else if (comp.type === 'push-button-2pole') {
+      const isPressed = Boolean(comp.properties?.isPressed);
+      // 2-Pole DPST: Pole 1 (1A-1B) and Pole 2 (2A-2B) are mutually isolated
+      // When pressed, both poles close independently
+      if (isPressed) {
+        addEdge(makePinKey(comp.id, '1A'), makePinKey(comp.id, '1B'));
+        addEdge(makePinKey(comp.id, '2A'), makePinKey(comp.id, '2B'));
+      }
+    } else if (comp.type === 'push-button-dpdt') {
+      const isPressed = Boolean(comp.properties?.isPressed);
+      // 2-Pole DPDT:
+      // When released: 1COM connects to 1NC; 2COM connects to 2NC
+      // When pressed: 1COM connects to 1NO; 2COM connects to 2NO
+      if (isPressed) {
+        addEdge(makePinKey(comp.id, '1COM'), makePinKey(comp.id, '1NO'));
+        addEdge(makePinKey(comp.id, '2COM'), makePinKey(comp.id, '2NO'));
+      } else {
+        addEdge(makePinKey(comp.id, '1COM'), makePinKey(comp.id, '1NC'));
+        addEdge(makePinKey(comp.id, '2COM'), makePinKey(comp.id, '2NC'));
+      }
+    } else if (comp.type === 'terminal-block-dual-4p') {
+      // 4 independent connected pairs across the barrier terminal block
+      addEdge(makePinKey(comp.id, '1A'), makePinKey(comp.id, '1B'));
+      addEdge(makePinKey(comp.id, '2A'), makePinKey(comp.id, '2B'));
+      addEdge(makePinKey(comp.id, '3A'), makePinKey(comp.id, '3B'));
+      addEdge(makePinKey(comp.id, '4A'), makePinKey(comp.id, '4B'));
+    } else if (comp.type === 'wire-connector-wago-5p') {
+      // All 5 ports are electrically connected together in a single shared bus
+      const ports = ['P1', 'P2', 'P3', 'P4', 'P5'];
+      for (let i = 0; i < ports.length - 1; i++) {
+        addEdge(makePinKey(comp.id, ports[i]), makePinKey(comp.id, ports[i + 1]));
+      }
+    } else if (comp.type === 'power-distribution-bus') {
+      // Positive rail (VCC) - all 4 ports connected
+      const vccPorts = ['VCC_1', 'VCC_2', 'VCC_3', 'VCC_4'];
+      for (let i = 0; i < vccPorts.length - 1; i++) {
+        addEdge(makePinKey(comp.id, vccPorts[i]), makePinKey(comp.id, vccPorts[i + 1]));
+      }
+      // Negative rail (GND) - all 4 ports connected
+      const gndPorts = ['GND_1', 'GND_2', 'GND_3', 'GND_4'];
+      for (let i = 0; i < gndPorts.length - 1; i++) {
+        addEdge(makePinKey(comp.id, gndPorts[i]), makePinKey(comp.id, gndPorts[i + 1]));
+      }
+    } else if (comp.type === 'wire-tap-junction-3p') {
+      // 3-way T-tap all connected together
+      addEdge(makePinKey(comp.id, 'IN'), makePinKey(comp.id, 'OUT1'));
+      addEdge(makePinKey(comp.id, 'IN'), makePinKey(comp.id, 'OUT2'));
     } else if (comp.type === 'toggle-switch') {
       const state = comp.properties?.state; // 'L1' or 'L2'
       if (state === 'L1') {
