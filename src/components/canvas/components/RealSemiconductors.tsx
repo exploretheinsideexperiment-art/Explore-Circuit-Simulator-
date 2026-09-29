@@ -32,9 +32,9 @@ export const RealTo92Transistor: React.FC<CompProps & {
   const modelName = props.model || partNumber;
 
   // Real-time state from solver / runtime
-  const state = comp.runtimeState?.state || 'CUTOFF';
-  const isConducting = comp.runtimeState?.isConducting ?? false;
-  const currentMa = comp.runtimeState?.currentMa ?? 0;
+  const state = props.state || comp.runtimeState?.state || 'CUTOFF';
+  const isConducting = props.isConducting ?? comp.runtimeState?.isConducting ?? false;
+  const currentMa = props.currentMa ?? comp.runtimeState?.currentMa ?? 0;
 
   return (
     <div className="relative w-18 h-20 flex flex-col items-center select-none font-mono">
@@ -123,8 +123,8 @@ export const RealTo220PowerPackage: React.FC<CompProps & {
   const pins = COMPONENT_CATALOG.find((c) => c.type === comp.type)?.pins || [];
   const modelName = props.model || partNumber;
 
-  const isConducting = comp.runtimeState?.isConducting ?? false;
-  const vgs = comp.runtimeState?.vgs ?? 0;
+  const isConducting = props.isConducting ?? comp.runtimeState?.isConducting ?? false;
+  const vgs = props.vgs ?? comp.runtimeState?.vgs ?? 0;
 
   return (
     <div className="relative w-22 h-26 flex flex-col items-center select-none font-mono">
@@ -227,8 +227,8 @@ export const RealDo41Diode: React.FC<CompProps & {
   const pins = COMPONENT_CATALOG.find((c) => c.type === comp.type)?.pins || [];
   const modelName = props.model || partNumber;
 
-  const isForwardBiased = comp.runtimeState?.isForwardBiased ?? false;
-  const currentMa = comp.runtimeState?.currentMa ?? 0;
+  const isForwardBiased = props.isForwardBiased ?? comp.runtimeState?.isForwardBiased ?? false;
+  const currentMa = props.currentMa ?? comp.runtimeState?.currentMa ?? 0;
 
   return (
     <div className="relative w-24 h-8 flex items-center justify-center select-none font-mono">

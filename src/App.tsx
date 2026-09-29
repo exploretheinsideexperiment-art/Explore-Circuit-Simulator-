@@ -25,6 +25,7 @@ import { DigitalMultimeter } from './components/instruments/DigitalMultimeter';
 import { Oscilloscope } from './components/instruments/Oscilloscope';
 import { BenchPowerSupply } from './components/instruments/BenchPowerSupply';
 import { FunctionGenerator, FunctionGeneratorOutputState } from './components/instruments/FunctionGenerator';
+import { ProbeTarget } from './components/instruments/MeasurementProbes';
 
 export default function App() {
   // Project Info
@@ -108,6 +109,19 @@ void loop() {
   const [externalWireStart, setExternalWireStart] = useState<{ compId: string; pinId: string; color?: string } | null>(null);
   const [activeWiringPin, setActiveWiringPin] = useState<{ compId: string; pinId: string } | null>(null);
 
+  // Measurement Tools Probes & Window Positions (Red and Black movable cables)
+  const [dmmRedProbe, setDmmRedProbe] = useState<ProbeTarget | null>(null);
+  const [dmmBlackProbe, setDmmBlackProbe] = useState<ProbeTarget | null>(null);
+  const [dmmPos, setDmmPos] = useState({ x: 30, y: 65 });
+
+  const [fgRedProbe, setFgRedProbe] = useState<ProbeTarget | null>(null);
+  const [fgBlackProbe, setFgBlackProbe] = useState<ProbeTarget | null>(null);
+  const [fgPos, setFgPos] = useState({ x: 340, y: 70 });
+
+  const [oscRedProbe, setOscRedProbe] = useState<ProbeTarget | null>(null);
+  const [oscBlackProbe, setOscBlackProbe] = useState<ProbeTarget | null>(null);
+  const [oscPos, setOscPos] = useState({ x: 260, y: 65 });
+
   // Function Generator output state and synchronization with Oscilloscope
   const [functionGenState, setFunctionGenState] = useState<FunctionGeneratorOutputState | null>(null);
   const functionGenStateRef = useRef<FunctionGeneratorOutputState | null>(null);
@@ -190,10 +204,33 @@ void loop() {
         driverType: 'ground',
       });
 
-      if (currentFg.isOn && currentFg.redProbe) {
+      const targetRed = fgRedProbe || (currentFg.redProbe ? { compId: currentFg.redProbe.compId, pinId: currentFg.redProbe.pinId } : null);
+      const targetBlack = fgBlackProbe || (currentFg.blackProbe ? { compId: currentFg.blackProbe.compId, pinId: currentFg.blackProbe.pinId } : null);
+
+      let redCompId = targetRed?.compId;
+      let redPinId = targetRed?.pinId;
+      if (!redCompId && (targetRed as any)?.wireId) {
+        const w = currentWires.find((wire) => wire.id === (targetRed as any).wireId);
+        if (w) {
+          redCompId = w.fromCompId;
+          redPinId = w.fromPinId;
+        }
+      }
+
+      let blackCompId = targetBlack?.compId;
+      let blackPinId = targetBlack?.pinId;
+      if (!blackCompId && (targetBlack as any)?.wireId) {
+        const w = currentWires.find((wire) => wire.id === (targetBlack as any).wireId);
+        if (w) {
+          blackCompId = w.fromCompId;
+          blackPinId = w.fromPinId;
+        }
+      }
+
+      if (currentFg.isOn && redCompId && redPinId) {
         externalInjections.push({
-          compId: currentFg.redProbe.compId,
-          pinId: currentFg.redProbe.pinId,
+          compId: redCompId,
+          pinId: redPinId,
           voltage: Math.max(0.1, Number(vRms.toFixed(2))) || 5.0,
           isAc: true,
           frequency: currentFg.frequency,
@@ -206,10 +243,10 @@ void loop() {
         });
       }
 
-      if (currentFg.blackProbe) {
+      if (blackCompId && blackPinId) {
         externalInjections.push({
-          compId: currentFg.blackProbe.compId,
-          pinId: currentFg.blackProbe.pinId,
+          compId: blackCompId,
+          pinId: blackPinId,
           voltage: 0,
           isDriven: true,
           driverType: 'ground',
@@ -902,6 +939,21 @@ void loop() {
             onToggleOscilloscope={() => setIsOscilloscopeOpen((v) => !v)}
             isFunctionGeneratorOpen={isFunctionGeneratorOpen}
             onToggleFunctionGenerator={() => setIsFunctionGeneratorOpen((v) => !v)}
+            multimeterRedProbe={dmmRedProbe}
+            multimeterBlackProbe={dmmBlackProbe}
+            onUpdateMultimeterRedProbe={(p) => { setDmmRedProbe(p); runCircuitSolver(); }}
+            onUpdateMultimeterBlackProbe={(p) => { setDmmBlackProbe(p); runCircuitSolver(); }}
+            multimeterPos={dmmPos}
+            fgRedProbe={fgRedProbe}
+            fgBlackProbe={fgBlackProbe}
+            onUpdateFgRedProbe={(p) => { setFgRedProbe(p); runCircuitSolver(); }}
+            onUpdateFgBlackProbe={(p) => { setFgBlackProbe(p); runCircuitSolver(); }}
+            fgPos={fgPos}
+            oscRedProbe={oscRedProbe}
+            oscBlackProbe={oscBlackProbe}
+            onUpdateOscRedProbe={(p) => { setOscRedProbe(p); runCircuitSolver(); }}
+            onUpdateOscBlackProbe={(p) => { setOscBlackProbe(p); runCircuitSolver(); }}
+            oscPos={oscPos}
             externalWireStart={externalWireStart}
             onClearExternalWireStart={() => setExternalWireStart(null)}
             onWireStartChange={setActiveWiringPin}
@@ -1021,6 +1073,11 @@ void loop() {
         onAddCanvasGenerator={handleAddFunctionGenerator}
         onOpenOscilloscope={handleConnectFgToOscilloscope}
         isOscilloscopeConnected={oscilloscopeCh1Pin?.compId === '__func_gen__'}
+        redProbe={fgRedProbe}
+        blackProbe={fgBlackProbe}
+        onUpdateRedProbe={(p) => { setFgRedProbe(p); runCircuitSolver(); }}
+        onUpdateBlackProbe={(p) => { setFgBlackProbe(p); runCircuitSolver(); }}
+        onPositionChange={setFgPos}
       />
 
       <DigitalMultimeter
@@ -1030,6 +1087,11 @@ void loop() {
         wires={wires}
         pinStates={pinStates}
         isRunning={isRunning}
+        redProbe={dmmRedProbe}
+        blackProbe={dmmBlackProbe}
+        onUpdateRedProbe={(p) => { setDmmRedProbe(p); runCircuitSolver(); }}
+        onUpdateBlackProbe={(p) => { setDmmBlackProbe(p); runCircuitSolver(); }}
+        onPositionChange={setDmmPos}
       />
 
       <Oscilloscope
@@ -1043,6 +1105,11 @@ void loop() {
         forcedCh1Pin={oscilloscopeCh1Pin}
         onCh1PinChange={setOscilloscopeCh1Pin}
         onOpenFunctionGenerator={() => setIsFunctionGeneratorOpen(true)}
+        redProbe={oscRedProbe}
+        blackProbe={oscBlackProbe}
+        onUpdateRedProbe={(p) => { setOscRedProbe(p); runCircuitSolver(); }}
+        onUpdateBlackProbe={(p) => { setOscBlackProbe(p); runCircuitSolver(); }}
+        onPositionChange={setOscPos}
       />
 
       {isBenchSupplyOpen && (

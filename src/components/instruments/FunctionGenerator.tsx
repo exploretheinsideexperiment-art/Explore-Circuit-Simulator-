@@ -29,8 +29,8 @@ export interface FunctionGeneratorOutputState {
   amplitude: number; // in Vpp
   offset: number; // in Volts DC
   duty: number; // in percent (10 - 90)
-  redProbe: { compId: string; pinId: string } | null;
-  blackProbe: { compId: string; pinId: string } | null;
+  redProbe: { compId?: string; pinId?: string; wireId?: string; label?: string } | null;
+  blackProbe: { compId?: string; pinId?: string; wireId?: string; label?: string } | null;
 }
 
 interface FunctionGeneratorProps {
@@ -43,6 +43,11 @@ interface FunctionGeneratorProps {
   onAddCanvasGenerator?: () => void;
   onOpenOscilloscope?: (channel?: 'CH1' | 'CH2') => void;
   isOscilloscopeConnected?: boolean;
+  redProbe?: { compId?: string; pinId?: string; wireId?: string; label?: string } | null;
+  blackProbe?: { compId?: string; pinId?: string; wireId?: string; label?: string } | null;
+  onUpdateRedProbe?: (probe: any) => void;
+  onUpdateBlackProbe?: (probe: any) => void;
+  onPositionChange?: (pos: { x: number; y: number }) => void;
 }
 
 const FREQ_PRESETS = [
@@ -77,12 +82,38 @@ export const FunctionGenerator: React.FC<FunctionGeneratorProps> = ({
   onAddCanvasGenerator,
   onOpenOscilloscope,
   isOscilloscopeConnected = false,
+  redProbe: controlledRedProbe,
+  blackProbe: controlledBlackProbe,
+  onUpdateRedProbe,
+  onUpdateBlackProbe,
+  onPositionChange,
 }) => {
   // Window State - default compact size
   const [position, setPosition] = useState({ x: 340, y: 70 });
   const [size, setSize] = useState({ width: 310, height: 430 });
   const [isMinimized, setIsMinimized] = useState(false);
   const [showProbeDrawer, setShowProbeDrawer] = useState(false);
+
+  // Probes fallback state
+  const [internalRedProbe, setInternalRedProbe] = useState<{ compId?: string; pinId?: string; wireId?: string; label?: string } | null>(null);
+  const [internalBlackProbe, setInternalBlackProbe] = useState<{ compId?: string; pinId?: string; wireId?: string; label?: string } | null>(null);
+
+  const redProbe = controlledRedProbe !== undefined ? controlledRedProbe : internalRedProbe;
+  const blackProbe = controlledBlackProbe !== undefined ? controlledBlackProbe : internalBlackProbe;
+
+  const setRedProbe = (p: any) => {
+    if (onUpdateRedProbe) onUpdateRedProbe(p);
+    else setInternalRedProbe(p);
+  };
+
+  const setBlackProbe = (p: any) => {
+    if (onUpdateBlackProbe) onUpdateBlackProbe(p);
+    else setInternalBlackProbe(p);
+  };
+
+  useEffect(() => {
+    onPositionChange?.(position);
+  }, [position, onPositionChange]);
 
   // Generator Output Parameters
   const [isOn, setIsOn] = useState(true);
@@ -91,10 +122,6 @@ export const FunctionGenerator: React.FC<FunctionGeneratorProps> = ({
   const [amplitude, setAmplitude] = useState<number>(5.0); // 5 Vpp default
   const [offset, setOffset] = useState<number>(0.0); // 0V DC default
   const [duty, setDuty] = useState<number>(50); // 50% default
-
-  // Probes (Red = Signal / OUT +, Black = GND / COM -)
-  const [redProbe, setRedProbe] = useState<{ compId: string; pinId: string } | null>(null);
-  const [blackProbe, setBlackProbe] = useState<{ compId: string; pinId: string } | null>(null);
 
   // Animation phase for live OLED screen
   const [animPhase, setAnimPhase] = useState(0);
@@ -116,34 +143,7 @@ export const FunctionGenerator: React.FC<FunctionGeneratorProps> = ({
   // Calculate available pins from circuit components
   const allPins = useMemo(() => getAllAvailablePins(components), [components]);
 
-  // Auto-assign default probes if unset and components exist
-  useEffect(() => {
-    if (!redProbe) {
-      const bbTop = allPins.find((p) => p.pinId === 'T_VCC' || p.pinId === 'T_VCC_1');
-      const mcuPin = allPins.find((p) => p.pinId === '2' || p.pinId === 'D2');
-      const firstVcc = allPins.find((p) => p.pinType === 'power_vcc' || p.pinType === 'passive');
-      if (bbTop) {
-        setRedProbe({ compId: bbTop.compId, pinId: bbTop.pinId });
-      } else if (mcuPin) {
-        setRedProbe({ compId: mcuPin.compId, pinId: mcuPin.pinId });
-      } else if (firstVcc) {
-        setRedProbe({ compId: firstVcc.compId, pinId: firstVcc.pinId });
-      }
-    }
-
-    if (!blackProbe) {
-      const bbGnd = allPins.find((p) => p.pinId === 'T_GND' || p.pinId === 'T_GND_1');
-      const mcuGnd = allPins.find((p) => p.pinId === 'GND');
-      const firstGnd = allPins.find((p) => p.pinType === 'power_gnd');
-      if (bbGnd) {
-        setBlackProbe({ compId: bbGnd.compId, pinId: bbGnd.pinId });
-      } else if (mcuGnd) {
-        setBlackProbe({ compId: mcuGnd.compId, pinId: mcuGnd.pinId });
-      } else if (firstGnd) {
-        setBlackProbe({ compId: firstGnd.compId, pinId: firstGnd.pinId });
-      }
-    }
-  }, [allPins, redProbe, blackProbe]);
+  // Probes start disconnected by default - connect only when touched to a terminal or cable
 
   // Propagate generator state to circuit engine
   useEffect(() => {

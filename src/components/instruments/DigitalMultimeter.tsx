@@ -6,7 +6,8 @@ import {
 import { CircuitComponent, Wire } from '../../types';
 import { PinState } from '../../engine/circuit';
 import { soundEngine } from '../../engine/audio';
-import { getAllAvailablePins, arePinsConnected } from './instrumentUtils';
+import { getAllAvailablePins, arePinsConnected, resolveProbeTargetReading } from './instrumentUtils';
+import { ProbeTarget } from './MeasurementProbes';
 
 export type DmmFunction = 'OFF' | 'V_DC' | 'V_AC' | 'RES' | 'CONT' | 'DIODE' | 'MA_DC';
 
@@ -29,6 +30,8 @@ export const DMM_DIAL_ITEMS: DmmDialItem[] = [
   { id: 'MA_DC', label: 'mA', displayLabel: 'CURRENT (mA DC)', color: 'text-rose-400', angle: 135, description: 'Measure DC Current' },
 ];
 
+export type MultimeterProbeTarget = ProbeTarget;
+
 interface DigitalMultimeterProps {
   isOpen: boolean;
   onClose: () => void;
@@ -36,6 +39,11 @@ interface DigitalMultimeterProps {
   wires: Wire[];
   pinStates: Record<string, PinState>;
   isRunning: boolean;
+  redProbe?: ProbeTarget | null;
+  blackProbe?: ProbeTarget | null;
+  onUpdateRedProbe?: (probe: ProbeTarget | null) => void;
+  onUpdateBlackProbe?: (probe: ProbeTarget | null) => void;
+  onPositionChange?: (pos: { x: number; y: number }) => void;
 }
 
 export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
@@ -45,6 +53,11 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
   wires,
   pinStates,
   isRunning,
+  redProbe: controlledRedProbe,
+  blackProbe: controlledBlackProbe,
+  onUpdateRedProbe,
+  onUpdateBlackProbe,
+  onPositionChange,
 }) => {
   // Multimeter settings - Starts in OFF position as requested
   const [dialPos, setDialPos] = useState<DmmFunction>('OFF');
@@ -65,9 +78,22 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartRef = useRef({ pointerX: 0, startScale: 0.85 });
 
-  // Probe assignments: { compId, pinId }
-  const [redProbe, setRedProbe] = useState<{ compId: string; pinId: string } | null>(null);
-  const [blackProbe, setBlackProbe] = useState<{ compId: string; pinId: string } | null>(null);
+  // Probe assignments: fallback to internal state if not controlled externally
+  const [internalRedProbe, setInternalRedProbe] = useState<MultimeterProbeTarget | null>(null);
+  const [internalBlackProbe, setInternalBlackProbe] = useState<MultimeterProbeTarget | null>(null);
+
+  const redProbe = controlledRedProbe !== undefined ? controlledRedProbe : internalRedProbe;
+  const blackProbe = controlledBlackProbe !== undefined ? controlledBlackProbe : internalBlackProbe;
+
+  const setRedProbe = (target: MultimeterProbeTarget | null) => {
+    if (onUpdateRedProbe) onUpdateRedProbe(target);
+    else setInternalRedProbe(target);
+  };
+
+  const setBlackProbe = (target: MultimeterProbeTarget | null) => {
+    if (onUpdateBlackProbe) onUpdateBlackProbe(target);
+    else setInternalBlackProbe(target);
+  };
 
   // Probe selector drawer toggle
   const [showProbeSelector, setShowProbeSelector] = useState(false);
@@ -78,38 +104,18 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
 
   const allPins = getAllAvailablePins(components);
 
-  // Auto-connect probes to first available Transformer, AC Power, DC Power, or MCU pins if not set
+  // Notify parent of multimeter position changes
   useEffect(() => {
-    if (!redProbe && components.length > 0) {
-      const xform = components.find((c) => c.type === 'transformer');
-      const acSupply = components.find((c) => c.type === 'power-supply-adjustable-ac');
-      const mcu = components.find((c) => c.type.startsWith('mcu-'));
-
-      if (xform) {
-        setRedProbe({ compId: xform.id, pinId: 'SEC1' });
-        setBlackProbe({ compId: xform.id, pinId: 'SEC2' });
-        setDialPos('V_AC');
-      } else if (acSupply && !mcu) {
-        setRedProbe({ compId: acSupply.id, pinId: 'LIVE' });
-        setBlackProbe({ compId: acSupply.id, pinId: 'NEUTRAL' });
-        setDialPos('V_AC');
-      } else if (mcu) {
-        setRedProbe({ compId: mcu.id, pinId: '2' }); // GPIO 2
-        setBlackProbe({ compId: mcu.id, pinId: 'GND' });
-      } else {
-        const firstPin = allPins[0];
-        const gndPin = allPins.find((p) => p.pinName.toLowerCase().includes('gnd')) || allPins[1];
-        if (firstPin) setRedProbe({ compId: firstPin.compId, pinId: firstPin.pinId });
-        if (gndPin) setBlackProbe({ compId: gndPin.compId, pinId: gndPin.pinId });
-      }
+    if (onPositionChange) {
+      onPositionChange(pos);
     }
-  }, [components]);
+  }, [pos, onPositionChange]);
 
   const handleConnectToTransformerSec = () => {
     const xform = components.find((c) => c.type === 'transformer');
     if (xform) {
-      setRedProbe({ compId: xform.id, pinId: 'SEC1' });
-      setBlackProbe({ compId: xform.id, pinId: 'SEC2' });
+      setRedProbe({ type: 'pin', compId: xform.id, pinId: 'SEC1', label: `${xform.properties?.label || 'T1'} • SEC1` });
+      setBlackProbe({ type: 'pin', compId: xform.id, pinId: 'SEC2', label: `${xform.properties?.label || 'T1'} • SEC2` });
       setDialPos('V_AC');
     }
   };
@@ -117,8 +123,8 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
   const handleConnectToTransformerPri = () => {
     const xform = components.find((c) => c.type === 'transformer');
     if (xform) {
-      setRedProbe({ compId: xform.id, pinId: 'PRI1' });
-      setBlackProbe({ compId: xform.id, pinId: 'PRI2' });
+      setRedProbe({ type: 'pin', compId: xform.id, pinId: 'PRI1', label: `${xform.properties?.label || 'T1'} • PRI1` });
+      setBlackProbe({ type: 'pin', compId: xform.id, pinId: 'PRI2', label: `${xform.properties?.label || 'T1'} • PRI2` });
       setDialPos('V_AC');
     }
   };
@@ -126,8 +132,8 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
   const handleConnectToTransformerCt = () => {
     const xform = components.find((c) => c.type === 'transformer');
     if (xform) {
-      setRedProbe({ compId: xform.id, pinId: 'SEC1' });
-      setBlackProbe({ compId: xform.id, pinId: 'SEC_CT' });
+      setRedProbe({ type: 'pin', compId: xform.id, pinId: 'SEC1', label: `${xform.properties?.label || 'T1'} • SEC1` });
+      setBlackProbe({ type: 'pin', compId: xform.id, pinId: 'SEC_CT', label: `${xform.properties?.label || 'T1'} • SEC_CT` });
       setDialPos('V_AC');
     }
   };
@@ -135,8 +141,8 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
   const handleConnectToAc = () => {
     const ac = components.find((c) => c.type === 'power-supply-adjustable-ac');
     if (ac) {
-      setRedProbe({ compId: ac.id, pinId: 'LIVE' });
-      setBlackProbe({ compId: ac.id, pinId: 'NEUTRAL' });
+      setRedProbe({ type: 'pin', compId: ac.id, pinId: 'LIVE', label: `${ac.properties?.label || 'AC'} • LIVE` });
+      setBlackProbe({ type: 'pin', compId: ac.id, pinId: 'NEUTRAL', label: `${ac.properties?.label || 'AC'} • NEUTRAL` });
       setDialPos('V_AC');
     }
   };
@@ -146,8 +152,8 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
       (c) => c.type === 'power-supply-adjustable-dc' || c.type.startsWith('power-supply-')
     );
     if (dc) {
-      setRedProbe({ compId: dc.id, pinId: 'VCC' });
-      setBlackProbe({ compId: dc.id, pinId: 'GND' });
+      setRedProbe({ type: 'pin', compId: dc.id, pinId: 'VCC', label: `${dc.properties?.label || 'DC'} • VCC` });
+      setBlackProbe({ type: 'pin', compId: dc.id, pinId: 'GND', label: `${dc.properties?.label || 'DC'} • GND` });
       setDialPos('V_DC');
     }
   };
@@ -227,21 +233,23 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
     };
   }, [isResizing, scale]);
 
-  // Read probe voltages safely
+  // Read probe voltages safely via robust net and pin/wire target resolver
+  const redResolved = resolveProbeTargetReading(redProbe, pinStates, wires);
+  const blackResolved = resolveProbeTargetReading(blackProbe, pinStates, wires);
+
   const redKey = redProbe ? `${redProbe.compId}:${redProbe.pinId}` : '';
   const blackKey = blackProbe ? `${blackProbe.compId}:${blackProbe.pinId}` : '';
-
   const redState = (redKey && pinStates) ? pinStates[redKey] : null;
   const blackState = (blackKey && pinStates) ? pinStates[blackKey] : null;
 
-  const vRed = (redState && redState.voltage !== undefined) ? redState.voltage : 0;
-  const vBlack = (blackState && blackState.voltage !== undefined) ? blackState.voltage : 0;
+  const vRed = redResolved.isLive ? redResolved.voltage : ((redState && redState.voltage !== undefined) ? redState.voltage : 0);
+  const vBlack = blackResolved.isLive ? blackResolved.voltage : ((blackState && blackState.voltage !== undefined) ? blackState.voltage : 0);
 
-  const isRedAc = Boolean(redState?.isAc);
-  const isBlackAc = Boolean(blackState?.isAc);
+  const isRedAc = Boolean(redResolved.isAc || redState?.isAc);
+  const isBlackAc = Boolean(blackResolved.isAc || blackState?.isAc);
   const isAcSignal = isRedAc || isBlackAc;
-  const acFreq = redState?.frequency || blackState?.frequency || 50;
-  const acWave = redState?.waveform || blackState?.waveform || 'sine';
+  const acFreq = redResolved.frequency || redState?.frequency || blackResolved.frequency || blackState?.frequency || 50;
+  const acWave = redResolved.waveform || redState?.waveform || blackResolved.waveform || blackState?.waveform || 'sine';
 
   // Calculate live measurement
   let displayValue = '0.000';
@@ -296,8 +304,8 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
     if (sameTransformer) {
       const xform = components.find(c => c.id === redProbe?.compId);
       const secType = xform?.properties?.secondaryType || 'standard';
-      const rPin = redProbe!.pinId;
-      const bPin = blackProbe!.pinId;
+      const rPin = redProbe?.pinId || '';
+      const bPin = blackProbe?.pinId || '';
 
       // Primary terminals (PRI1 to PRI2)
       if ((rPin === 'PRI1' && bPin === 'PRI2') || (rPin === 'PRI2' && bPin === 'PRI1')) {
@@ -370,7 +378,9 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
         barPercentage = 0;
       }
     } else {
-      const connected = arePinsConnected(redProbe, blackProbe, wires);
+      const connected = (redProbe.compId && redProbe.pinId && blackProbe.compId && blackProbe.pinId)
+        ? arePinsConnected({ compId: redProbe.compId, pinId: redProbe.pinId }, { compId: blackProbe.compId, pinId: blackProbe.pinId }, wires)
+        : false;
       if (connected) {
         displayValue = '0.02';
         displayUnit = 'Ω';
@@ -389,7 +399,9 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
       isBeeping = false;
     } else {
       const samePin = redProbe.compId === blackProbe.compId && redProbe.pinId === blackProbe.pinId;
-      const connected = samePin || arePinsConnected(redProbe, blackProbe, wires);
+      const connected = samePin || ((redProbe.compId && redProbe.pinId && blackProbe.compId && blackProbe.pinId)
+        ? arePinsConnected({ compId: redProbe.compId, pinId: redProbe.pinId }, { compId: blackProbe.compId, pinId: blackProbe.pinId }, wires)
+        : false);
 
       if (connected) {
         displayValue = '00.1';
@@ -412,7 +424,7 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
     } else if (redProbe.compId === blackProbe.compId) {
       const comp = components.find((c) => c.id === redProbe.compId);
       if (comp && comp.type === 'led') {
-        if (redProbe.pinId.toLowerCase() === 'anode' && blackProbe.pinId.toLowerCase() === 'cathode') {
+        if ((redProbe.pinId || '').toLowerCase() === 'anode' && (blackProbe.pinId || '').toLowerCase() === 'cathode') {
           displayValue = '1.854';
           displayUnit = 'V';
         } else {
@@ -420,8 +432,8 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
           displayUnit = 'V';
         }
       } else if (comp && comp.type.startsWith('diode-')) {
-        const rPin = redProbe.pinId.toUpperCase();
-        const bPin = blackProbe.pinId.toUpperCase();
+        const rPin = (redProbe.pinId || '').toUpperCase();
+        const bPin = (blackProbe.pinId || '').toUpperCase();
         if (rPin === 'ANODE' && bPin === 'CATHODE') {
           const drop = Number(comp.properties?.forwardDrop) || (comp.type === 'diode-schottky' ? 0.245 : 0.652);
           displayValue = drop.toFixed(3);
@@ -845,11 +857,11 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
                       onClick={() => {
                         const fg = components.find((c) => c.type === 'function-generator');
                         if (fg) {
-                          setRedProbe({ compId: fg.id, pinId: 'OUT' });
-                          setBlackProbe({ compId: fg.id, pinId: 'GND' });
+                          setRedProbe({ type: 'pin', compId: fg.id, pinId: 'OUT', label: `${fg.properties?.label || 'FG'} • OUT` });
+                          setBlackProbe({ type: 'pin', compId: fg.id, pinId: 'GND', label: `${fg.properties?.label || 'FG'} • GND` });
                         } else {
-                          setRedProbe({ compId: '__func_gen__', pinId: 'OUT' });
-                          setBlackProbe({ compId: '__func_gen__', pinId: 'GND' });
+                          setRedProbe({ type: 'pin', compId: '__func_gen__', pinId: 'OUT', label: 'Func Gen • OUT' });
+                          setBlackProbe({ type: 'pin', compId: '__func_gen__', pinId: 'GND', label: 'Func Gen • GND' });
                         }
                         setDialPos('V_AC');
                       }}
@@ -888,8 +900,8 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
                         onClick={() => {
                           const diode = components.find((c) => c.type.startsWith('diode-'));
                           if (diode) {
-                            setRedProbe({ compId: diode.id, pinId: 'ANODE' });
-                            setBlackProbe({ compId: diode.id, pinId: 'CATHODE' });
+                            setRedProbe({ type: 'pin', compId: diode.id, pinId: 'ANODE', label: `${diode.properties?.label || 'D1'} • ANODE` });
+                            setBlackProbe({ type: 'pin', compId: diode.id, pinId: 'CATHODE', label: `${diode.properties?.label || 'D1'} • CATHODE` });
                             setDialPos('V_DC');
                           }
                         }}
@@ -922,8 +934,8 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
                         onClick={() => {
                           const mcu = components.find((c) => c.type.startsWith('mcu-'));
                           if (mcu) {
-                            setRedProbe({ compId: mcu.id, pinId: '2' });
-                            setBlackProbe({ compId: mcu.id, pinId: 'GND' });
+                            setRedProbe({ type: 'pin', compId: mcu.id, pinId: '2', label: `${mcu.properties?.label || 'MCU'} • GPIO 2` });
+                            setBlackProbe({ type: 'pin', compId: mcu.id, pinId: 'GND', label: `${mcu.properties?.label || 'MCU'} • GND` });
                             setDialPos('V_DC');
                           }
                         }}
@@ -943,8 +955,14 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
                   <select
                     value={redProbe ? `${redProbe.compId}:${redProbe.pinId}` : ''}
                     onChange={(e) => {
-                      const [compId, pinId] = e.target.value.split(':');
-                      if (compId && pinId) setRedProbe({ compId, pinId });
+                      const val = e.target.value;
+                      if (!val) {
+                        setRedProbe(null);
+                        return;
+                      }
+                      const [compId, pinId] = val.split(':');
+                      const foundPin = allPins.find((p) => p.compId === compId && p.pinId === pinId);
+                      setRedProbe({ type: 'pin', compId, pinId, label: foundPin?.label || `${compId}:${pinId}` });
                     }}
                     className="w-full bg-zinc-950 border border-zinc-700 rounded p-1 text-[10px] text-zinc-200 focus:outline-none focus:border-red-500"
                   >
@@ -964,8 +982,14 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
                   <select
                     value={blackProbe ? `${blackProbe.compId}:${blackProbe.pinId}` : ''}
                     onChange={(e) => {
-                      const [compId, pinId] = e.target.value.split(':');
-                      if (compId && pinId) setBlackProbe({ compId, pinId });
+                      const val = e.target.value;
+                      if (!val) {
+                        setBlackProbe(null);
+                        return;
+                      }
+                      const [compId, pinId] = val.split(':');
+                      const foundPin = allPins.find((p) => p.compId === compId && p.pinId === pinId);
+                      setBlackProbe({ type: 'pin', compId, pinId, label: foundPin?.label || `${compId}:${pinId}` });
                     }}
                     className="w-full bg-zinc-950 border border-zinc-700 rounded p-1 text-[10px] text-zinc-200 focus:outline-none focus:border-zinc-500"
                   >

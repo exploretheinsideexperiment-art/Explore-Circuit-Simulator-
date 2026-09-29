@@ -229,9 +229,9 @@ export const RealCapacitor: React.FC<CompProps> = ({ comp, renderPin }) => {
   const unit = props.unit || 'µF';
   const voltageRating = props.voltageRating || '25V';
   const capPins = COMPONENT_CATALOG.find((c) => c.type === 'capacitor')?.pins || [];
-  const storedVoltage = Number(comp.runtimeState?.storedVoltage) || 0;
-  const isDischarging = Boolean(comp.runtimeState?.isDischarging);
-  const isCharging = Boolean(comp.runtimeState?.isCharging);
+  const storedVoltage = Number(props.storedVoltage ?? comp.runtimeState?.storedVoltage) || 0;
+  const isDischarging = Boolean(props.isDischarging ?? comp.runtimeState?.isDischarging);
+  const isCharging = Boolean(props.isCharging ?? comp.runtimeState?.isCharging);
 
   return (
     <div className="relative w-12 h-18 select-none flex flex-col items-center font-mono">

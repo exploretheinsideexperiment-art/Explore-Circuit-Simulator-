@@ -8,6 +8,7 @@ import { SUPPORTED_BOARDS } from '../../engine/mcu/boards';
 import { ZoomIn, ZoomOut, Maximize2, Grid, Trash2, Plus, FolderOpen, Cpu, X, Cable, RotateCw, Play, Pause, Square } from 'lucide-react';
 import { MeasurementMenu } from '../instruments/MeasurementMenu';
 import { PowerSupplyMenu } from '../instruments/PowerSupplyMenu';
+import { MeasurementProbes, ProbeTarget } from '../instruments/MeasurementProbes';
 import { RealMcuBoard } from './components/RealMcuBoards';
 import { 
   RealLed, 
@@ -94,6 +95,21 @@ interface CircuitCanvasProps {
   onToggleOscilloscope: () => void;
   isFunctionGeneratorOpen?: boolean;
   onToggleFunctionGenerator?: () => void;
+  multimeterRedProbe?: ProbeTarget | null;
+  multimeterBlackProbe?: ProbeTarget | null;
+  onUpdateMultimeterRedProbe?: (probe: ProbeTarget | null) => void;
+  onUpdateMultimeterBlackProbe?: (probe: ProbeTarget | null) => void;
+  multimeterPos?: { x: number; y: number };
+  fgRedProbe?: ProbeTarget | null;
+  fgBlackProbe?: ProbeTarget | null;
+  onUpdateFgRedProbe?: (probe: ProbeTarget | null) => void;
+  onUpdateFgBlackProbe?: (probe: ProbeTarget | null) => void;
+  fgPos?: { x: number; y: number };
+  oscRedProbe?: ProbeTarget | null;
+  oscBlackProbe?: ProbeTarget | null;
+  onUpdateOscRedProbe?: (probe: ProbeTarget | null) => void;
+  onUpdateOscBlackProbe?: (probe: ProbeTarget | null) => void;
+  oscPos?: { x: number; y: number };
   onAddDcSupply?: (voltage: number, currentLimit: number) => any;
   onAddAcSupply?: (voltage: number, frequency: number, waveform: 'sine' | 'square' | 'triangle') => any;
   onOpenBenchSupply?: () => void;
@@ -144,6 +160,21 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   onToggleOscilloscope,
   isFunctionGeneratorOpen = false,
   onToggleFunctionGenerator = () => {},
+  multimeterRedProbe,
+  multimeterBlackProbe,
+  onUpdateMultimeterRedProbe,
+  onUpdateMultimeterBlackProbe,
+  multimeterPos,
+  fgRedProbe,
+  fgBlackProbe,
+  onUpdateFgRedProbe,
+  onUpdateFgBlackProbe,
+  fgPos,
+  oscRedProbe,
+  oscBlackProbe,
+  onUpdateOscRedProbe,
+  onUpdateOscBlackProbe,
+  oscPos,
   onAddDcSupply,
   onAddAcSupply,
   onOpenBenchSupply,
@@ -558,7 +589,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
         setPan({ x: touch.clientX - panStart.x, y: touch.clientY - panStart.y });
       } else if (wireStart) {
         const el = document.elementFromPoint(touch.clientX, touch.clientY);
-        const pinTarget = el?.closest('[data-pin-comp-id]');
+        const pinTarget = (el && typeof (el as any).closest === 'function') ? (el as Element).closest('[data-pin-comp-id]') : null;
         if (pinTarget) {
           const compId = pinTarget.getAttribute('data-pin-comp-id');
           const pinId = pinTarget.getAttribute('data-pin-id');
@@ -578,7 +609,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     if (wireStart && e.changedTouches?.[0]) {
       const touch = e.changedTouches[0];
       const el = document.elementFromPoint(touch.clientX, touch.clientY);
-      const pinTarget = el?.closest('[data-pin-comp-id]');
+      const pinTarget = (el && typeof (el as any).closest === 'function') ? (el as Element).closest('[data-pin-comp-id]') : null;
       const targetCompId = pinTarget?.getAttribute('data-pin-comp-id') || hoveredPin?.compId;
       const targetPinId = pinTarget?.getAttribute('data-pin-id') || hoveredPin?.pinId;
 
@@ -1112,15 +1143,16 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // NEVER delete components or wires if the user is typing inside an input, textarea, or contentEditable element!
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
+      const target = e.target as any;
+      const isTyping =
+        Boolean(target) &&
         (target.tagName === 'INPUT' ||
           target.tagName === 'TEXTAREA' ||
           target.tagName === 'SELECT' ||
-          target.isContentEditable ||
-          Boolean(target.closest('input, textarea, select, [contenteditable="true"]')))
-      ) {
+          Boolean(target.isContentEditable) ||
+          (typeof target?.closest === 'function' &&
+            Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))));
+      if (isTyping) {
         return;
       }
 
@@ -1160,7 +1192,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
     const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
       // If click was inside canvas container, canvas handlers will handle it
-      if (containerRef.current && containerRef.current.contains(e.target as Node)) {
+      if (containerRef.current && e.target instanceof Node && containerRef.current.contains(e.target)) {
         return;
       }
       // Clicked outside canvas (toolbar, editor, side drawer, etc.) - cancel wire!
@@ -1171,7 +1203,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     };
 
     const handleContextMenu = (e: MouseEvent) => {
-      if (containerRef.current && containerRef.current.contains(e.target as Node)) {
+      if (containerRef.current && e.target instanceof Node && containerRef.current.contains(e.target)) {
         if (wireStart) {
           e.preventDefault();
           if (wireWaypoints.length > 0) {
@@ -2155,6 +2187,67 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           );
         })}
       </div>
+
+      {/* Top Interactive SVG Layer: Measurement Probes with Movable Red & Black Silicone Cables */}
+      <svg
+        className="absolute inset-0 w-full h-full pointer-events-none z-30"
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transformOrigin: '0 0',
+        }}
+      >
+        {isMultimeterOpen && (
+          <MeasurementProbes
+            components={components}
+            wires={wires}
+            pinStates={pinStates}
+            zoom={zoom}
+            pan={pan}
+            getPinAbsolutePos={getPinAbsolutePos}
+            redProbe={multimeterRedProbe ?? null}
+            blackProbe={multimeterBlackProbe ?? null}
+            onUpdateRedProbe={onUpdateMultimeterRedProbe || (() => {})}
+            onUpdateBlackProbe={onUpdateMultimeterBlackProbe || (() => {})}
+            instrumentPos={multimeterPos}
+            instrumentType="multimeter"
+            isVisible={isMultimeterOpen}
+          />
+        )}
+        {isFunctionGeneratorOpen && (
+          <MeasurementProbes
+            components={components}
+            wires={wires}
+            pinStates={pinStates}
+            zoom={zoom}
+            pan={pan}
+            getPinAbsolutePos={getPinAbsolutePos}
+            redProbe={fgRedProbe ?? null}
+            blackProbe={fgBlackProbe ?? null}
+            onUpdateRedProbe={onUpdateFgRedProbe || (() => {})}
+            onUpdateBlackProbe={onUpdateFgBlackProbe || (() => {})}
+            instrumentPos={fgPos}
+            instrumentType="function-generator"
+            isVisible={Boolean(isFunctionGeneratorOpen)}
+          />
+        )}
+        {isOscilloscopeOpen && (
+          <MeasurementProbes
+            components={components}
+            wires={wires}
+            pinStates={pinStates}
+            zoom={zoom}
+            pan={pan}
+            getPinAbsolutePos={getPinAbsolutePos}
+            redProbe={oscRedProbe ?? null}
+            blackProbe={oscBlackProbe ?? null}
+            onUpdateRedProbe={onUpdateOscRedProbe || (() => {})}
+            onUpdateBlackProbe={onUpdateOscBlackProbe || (() => {})}
+            instrumentPos={oscPos}
+            instrumentType="oscilloscope"
+            isVisible={isOscilloscopeOpen}
+          />
+        )}
+      </svg>
     </div>
   );
 };
@@ -2285,6 +2378,7 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
   // Merge static comp properties with dynamic runtime simulation updates from circuit solver
   const effectiveComp = React.useMemo(() => ({
     ...comp,
+    runtimeState: { ...comp.runtimeState, ...props },
     properties: { ...comp.properties, ...props }
   }), [comp, props]);
 

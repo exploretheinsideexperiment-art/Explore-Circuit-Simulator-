@@ -106,11 +106,12 @@ export const PowerSupplyMenu: React.FC<PowerSupplyMenuProps> = ({
   // Close dropdown on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
+      if (!(e.target instanceof Node)) return;
       if (
         menuRef.current && 
-        !menuRef.current.contains(e.target as Node) &&
+        !menuRef.current.contains(e.target) &&
         buttonRef.current &&
-        !buttonRef.current.contains(e.target as Node)
+        !buttonRef.current.contains(e.target)
       ) {
         setIsOpen(false);
         setActivePickerPin(null);

@@ -12,30 +12,18 @@ interface CompProps {
 export const RealLed: React.FC<CompProps> = ({ comp, pinStates, renderPin }) => {
   const props = comp.properties || {};
   const color = props.color || 'red';
-  const customBrightness = props.brightness;
   
-  // Calculate voltage from pinStates or properties
-  const anodePin = pinStates[`${comp.id}:ANODE`];
-  const cathodePin = pinStates[`${comp.id}:CATHODE`];
-  const hasSupply = anodePin && anodePin.signalLevel !== 'FLOATING' && anodePin.voltage >= 1.6;
-  const hasGround = cathodePin && (cathodePin.signalLevel === 'POWER_GND' || cathodePin.signalLevel === 'LOW' || (cathodePin.signalLevel !== 'FLOATING' && (cathodePin.voltage || 0) < (anodePin?.voltage || 0)));
-
-  const anodeV = hasSupply ? (anodePin.voltage ?? 0) : 0;
-  const cathodeV = hasGround ? (cathodePin.voltage ?? 0) : 0;
-  const deltaV = Math.max(0, anodeV - cathodeV);
-
-  // Brightness: strictly 0 if no supply or ground return
-  const brightness = (hasSupply && hasGround && deltaV >= 1.5)
-    ? (customBrightness !== undefined ? customBrightness : Math.min(1, (deltaV - 1.2) / 1.5))
-    : 0;
+  // LED illuminates ONLY from circuit solver's validated closed-circuit calculation.
+  // Never default to lit or guess ground from floating connections!
+  const brightness = Math.max(0, Math.min(1.0, Number(props.brightness ?? 0)));
 
   const colorPalettes: Record<string, { body: string; lit: string; glow: string; core: string }> = {
-    red: { body: '#7f1d1d', lit: '#ef4444', glow: 'rgba(239,68,68,0.7)', core: '#fca5a5' },
-    green: { body: '#14532d', lit: '#22c55e', glow: 'rgba(34,197,94,0.7)', core: '#86efac' },
-    blue: { body: '#1e3a8a', lit: '#3b82f6', glow: 'rgba(59,130,246,0.7)', core: '#93c5fd' },
-    yellow: { body: '#713f12', lit: '#eab308', glow: 'rgba(234,179,8,0.7)', core: '#fef08a' },
-    white: { body: '#334155', lit: '#f8fafc', glow: 'rgba(248,250,252,0.8)', core: '#ffffff' },
-    orange: { body: '#7c2d12', lit: '#f97316', glow: 'rgba(249,115,22,0.7)', core: '#fdba74' },
+    red: { body: '#3b1215', lit: '#ef4444', glow: 'rgba(239,68,68,0.7)', core: '#fca5a5' },
+    green: { body: '#0f2918', lit: '#22c55e', glow: 'rgba(34,197,94,0.7)', core: '#86efac' },
+    blue: { body: '#111e3b', lit: '#3b82f6', glow: 'rgba(59,130,246,0.7)', core: '#93c5fd' },
+    yellow: { body: '#332209', lit: '#eab308', glow: 'rgba(234,179,8,0.7)', core: '#fef08a' },
+    white: { body: '#1e2430', lit: '#f8fafc', glow: 'rgba(248,250,252,0.8)', core: '#ffffff' },
+    orange: { body: '#36150a', lit: '#f97316', glow: 'rgba(249,115,22,0.7)', core: '#fdba74' },
   };
 
   const pal = colorPalettes[color] || colorPalettes.red;
@@ -123,16 +111,26 @@ export const RealRgbLed: React.FC<CompProps> = ({ comp, pinStates, renderPin }) 
   const rgbPins = COMPONENT_CATALOG.find((c) => c.type === 'rgb-led')?.pins || [];
 
   const cathodePin = pinStates[`${comp.id}:CATHODE`];
-  const hasCathodeGnd = cathodePin && (cathodePin.signalLevel === 'POWER_GND' || cathodePin.signalLevel === 'LOW');
-  const vCathode = hasCathodeGnd ? (cathodePin.voltage || 0) : 0;
+  const hasCathodeGnd = Boolean(
+    cathodePin && (
+      cathodePin.signalLevel === 'POWER_GND' ||
+      cathodePin.driverType === 'ground' ||
+      (cathodePin.driverType === 'mcu_output' && cathodePin.signalLevel === 'LOW')
+    )
+  );
+  const vCathode = hasCathodeGnd ? (cathodePin?.voltage || 0) : 0;
 
   const pR = pinStates[`${comp.id}:RED`];
   const pG = pinStates[`${comp.id}:GREEN`];
   const pB = pinStates[`${comp.id}:BLUE`];
 
-  const rV = (hasCathodeGnd && pR && pR.signalLevel !== 'FLOATING') ? Math.max(0, pR.voltage - vCathode) : (hasCathodeGnd && props.r ? Number(props.r) / 255 * 3.3 : 0);
-  const gV = (hasCathodeGnd && pG && pG.signalLevel !== 'FLOATING') ? Math.max(0, pG.voltage - vCathode) : (hasCathodeGnd && props.g ? Number(props.g) / 255 * 3.3 : 0);
-  const bV = (hasCathodeGnd && pB && pB.signalLevel !== 'FLOATING') ? Math.max(0, pB.voltage - vCathode) : (hasCathodeGnd && props.b ? Number(props.b) / 255 * 3.3 : 0);
+  const hasRedSupply = Boolean(hasCathodeGnd && pR && pR.signalLevel !== 'FLOATING' && (pR.voltage || 0) >= 1.6);
+  const hasGreenSupply = Boolean(hasCathodeGnd && pG && pG.signalLevel !== 'FLOATING' && (pG.voltage || 0) >= 1.6);
+  const hasBlueSupply = Boolean(hasCathodeGnd && pB && pB.signalLevel !== 'FLOATING' && (pB.voltage || 0) >= 1.6);
+
+  const rV = hasRedSupply ? Math.max(0, (pR?.voltage || 0) - vCathode) : 0;
+  const gV = hasGreenSupply ? Math.max(0, (pG?.voltage || 0) - vCathode) : 0;
+  const bV = hasBlueSupply ? Math.max(0, (pB?.voltage || 0) - vCathode) : 0;
 
   const isLit = rV > 0.5 || gV > 0.5 || bV > 0.5;
   const redAmt = Math.min(255, Math.round((rV / 3.3) * 255));
@@ -184,12 +182,18 @@ export const RealRgbLed: React.FC<CompProps> = ({ comp, pinStates, renderPin }) 
 };
 
 // --- 3. WS2812B NEOPIXEL 8-LED BAR ---
-export const RealNeoPixelStrip: React.FC<CompProps> = ({ comp, renderPin }) => {
+export const RealNeoPixelStrip: React.FC<CompProps> = ({ comp, pinStates, renderPin }) => {
   const props = comp.properties || {};
-  const pixels: string[] = props.pixels || [
-    '#ff0055', '#ffaa00', '#00ff88', '#00e5ff', '#0055ff', '#9900ff', '#ff00aa', '#ffffff'
-  ];
   const stripPins = COMPONENT_CATALOG.find((c) => c.type === 'neopixel-strip')?.pins || [];
+
+  const vccPin = pinStates[`${comp.id}:VCC`];
+  const gndPin = pinStates[`${comp.id}:GND`];
+  const isPowered = Boolean(
+    vccPin && vccPin.signalLevel !== 'FLOATING' && (vccPin.voltage || 0) >= 3.5 &&
+    gndPin && (gndPin.signalLevel === 'POWER_GND' || gndPin.driverType === 'ground')
+  );
+
+  const pixels: string[] = isPowered && props.pixels ? props.pixels : [];
 
   return (
     <div className="relative w-46 h-12 bg-[#12161f] rounded-md border border-slate-700 shadow-xl flex items-center justify-between px-2 select-none font-mono">
@@ -202,18 +206,19 @@ export const RealNeoPixelStrip: React.FC<CompProps> = ({ comp, renderPin }) => {
 
       {/* 8 SMD 5050 Packages with Silicone Lens & Micro-Dies */}
       <div className="relative z-10 w-full flex justify-between px-3">
-        {pixels.slice(0, 8).map((color, idx) => {
-          const isBlack = !color || color === '#000000' || color === 'black';
+        {Array.from({ length: 8 }).map((_, idx) => {
+          const color = pixels[idx];
+          const isLit = isPowered && color && color !== '#000000' && color !== 'black';
           return (
             <div
               key={idx}
-              className="w-3.5 h-3.5 bg-white border border-slate-400 rounded-xs flex items-center justify-center relative shadow-sm"
+              className="w-3.5 h-3.5 bg-[#1e2533] border border-slate-600 rounded-xs flex items-center justify-center relative shadow-sm"
             >
               {/* Silicone Circular Emitter Window */}
               <div
                 style={{
-                  backgroundColor: isBlack ? '#334155' : color,
-                  boxShadow: isBlack ? 'none' : `0 0 8px ${color}, 0 0 16px ${color}`,
+                  backgroundColor: isLit ? color : '#0f172a',
+                  boxShadow: isLit ? `0 0 8px ${color}, 0 0 16px ${color}` : 'none',
                 }}
                 className="w-2.5 h-2.5 rounded-full transition-colors duration-100 flex items-center justify-center"
               >
@@ -238,9 +243,8 @@ export const RealNeoPixelStrip: React.FC<CompProps> = ({ comp, renderPin }) => {
 };
 
 // --- 4. 7-SEGMENT DISPLAY (1-DIGIT) ---
-export const RealSevenSegment: React.FC<CompProps> = ({ comp, renderPin }) => {
+export const RealSevenSegment: React.FC<CompProps> = ({ comp, pinStates, renderPin }) => {
   const props = comp.properties || {};
-  const val = String(props.currentValue ?? '8');
   const segPins = COMPONENT_CATALOG.find((c) => c.type === 'seven-segment')?.pins || [];
 
   // Segment map for standard numbers 0-9
@@ -257,12 +261,16 @@ export const RealSevenSegment: React.FC<CompProps> = ({ comp, renderPin }) => {
     '9': { a: true, b: true, c: true, d: true, e: false, f: true, g: true },
   };
 
-  const segments = digitMap[val] || digitMap['8'];
+  // Only illuminate segments if actively driven or provided with a real value
+  const hasValue = props.currentValue !== undefined && props.currentValue !== null && props.currentValue !== '';
+  const val = hasValue ? String(props.currentValue) : null;
+  const segments = (val && digitMap[val]) ? digitMap[val] : { a: false, b: false, c: false, d: false, e: false, f: false, g: false };
+  const dpOn = Boolean(props.dp);
 
   const getSegClass = (isOn: boolean) =>
     isOn
       ? 'bg-rose-500 shadow-[0_0_8px_#f43f5e] ring-1 ring-rose-400'
-      : 'bg-neutral-800/80 border border-neutral-900';
+      : 'bg-neutral-900 border border-neutral-950 opacity-40';
 
   return (
     <div className="relative w-18 h-24 bg-[#15171c] rounded-md border-2 border-slate-700 shadow-2xl p-2 select-none flex flex-col justify-between items-center">
@@ -285,7 +293,9 @@ export const RealSevenSegment: React.FC<CompProps> = ({ comp, renderPin }) => {
           <div className={`w-1.5 h-4.5 rounded-sm transition-colors ${getSegClass(segments.e)}`} />
           <div className={`w-1.5 h-4.5 rounded-sm transition-colors ${getSegClass(segments.c)}`} />
           {/* Decimal Point (DP) */}
-          <div className="absolute right-[-2px] bottom-0 w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_4px_#f43f5e]" />
+          <div className={`absolute right-[-2px] bottom-0 w-1.5 h-1.5 rounded-full transition-colors ${
+            dpOn ? 'bg-rose-500 shadow-[0_0_4px_#f43f5e]' : 'bg-neutral-900 opacity-40'
+          }`} />
         </div>
 
         {/* Segment D (Bottom) */}
@@ -305,9 +315,17 @@ export const RealSevenSegment: React.FC<CompProps> = ({ comp, renderPin }) => {
 };
 
 // --- 5. REALISTIC SSD1306 0.96" OLED DISPLAY (128x64 I2C) ---
-export const RealOledDisplay: React.FC<CompProps> = ({ comp, renderPin }) => {
+export const RealOledDisplay: React.FC<CompProps> = ({ comp, pinStates, renderPin }) => {
   const props = comp.properties || {};
   const oledPins = COMPONENT_CATALOG.find((c) => c.type === 'display-oled-ssd1306')?.pins || [];
+
+  const vccPin = pinStates[`${comp.id}:VCC`];
+  const gndPin = pinStates[`${comp.id}:GND`];
+  const isPowered = Boolean(
+    vccPin && vccPin.signalLevel !== 'FLOATING' && (vccPin.voltage || 0) >= 3.0 &&
+    gndPin && (gndPin.signalLevel === 'POWER_GND' || gndPin.driverType === 'ground')
+  );
+
   const displayText = props.displayText || 'ExploreSim OLED\nSSD1306 128x64\nSystem Ready';
 
   return (
@@ -329,14 +347,21 @@ export const RealOledDisplay: React.FC<CompProps> = ({ comp, renderPin }) => {
         {/* Anti-reflective blue sheen */}
         <div className="absolute inset-0 bg-gradient-to-br from-cyan-900/10 via-transparent to-blue-900/10 pointer-events-none" />
 
-        {/* Emissive OLED Pixel Text */}
-        <div className="relative z-10 text-[8.5px] font-mono font-medium text-cyan-300 leading-tight whitespace-pre-wrap tracking-wide drop-shadow-[0_0_3px_#22d3ee]">
-          {displayText}
-        </div>
+        {/* Emissive OLED Pixel Text (Only when powered!) */}
+        {isPowered ? (
+          <div className="relative z-10 text-[8.5px] font-mono font-medium text-cyan-300 leading-tight whitespace-pre-wrap tracking-wide drop-shadow-[0_0_3px_#22d3ee]">
+            {displayText}
+          </div>
+        ) : (
+          <div className="relative z-10 flex flex-col items-center justify-center h-full text-[7px] font-mono text-slate-700 uppercase tracking-widest">
+            <span>[ No Power ]</span>
+            <span className="text-[5.5px] text-slate-800 mt-0.5">Connect VCC (3.3V) & GND</span>
+          </div>
+        )}
 
-        <div className="flex justify-between items-center text-[6px] text-cyan-500 font-bold border-t border-cyan-950/60 pt-0.5">
-          <span>0x3C</span>
-          <span>128x64 px</span>
+        <div className="flex justify-between items-center text-[6px] text-slate-600 font-bold border-t border-slate-900 pt-0.5">
+          <span className={isPowered ? 'text-cyan-500' : 'text-slate-700'}>0x3C</span>
+          <span className={isPowered ? 'text-cyan-500' : 'text-slate-700'}>{isPowered ? '128x64 px' : 'OFF'}</span>
         </div>
       </div>
     </div>
@@ -344,9 +369,17 @@ export const RealOledDisplay: React.FC<CompProps> = ({ comp, renderPin }) => {
 };
 
 // --- 6. REALISTIC LCD 1602 (WITH I2C BACKPACK) ---
-export const RealLcd1602: React.FC<CompProps> = ({ comp, renderPin }) => {
+export const RealLcd1602: React.FC<CompProps> = ({ comp, pinStates, renderPin }) => {
   const props = comp.properties || {};
   const lcdPins = COMPONENT_CATALOG.find((c) => c.type === 'display-lcd-1602-i2c')?.pins || [];
+
+  const vccPin = pinStates[`${comp.id}:VCC`];
+  const gndPin = pinStates[`${comp.id}:GND`];
+  const isPowered = Boolean(
+    vccPin && vccPin.signalLevel !== 'FLOATING' && (vccPin.voltage || 0) >= 4.0 &&
+    gndPin && (gndPin.signalLevel === 'POWER_GND' || gndPin.driverType === 'ground')
+  );
+
   const line1 = (props.line1 || 'ExploreSim LCD').padEnd(16, ' ').slice(0, 16);
   const line2 = (props.line2 || '16x2 System OK').padEnd(16, ' ').slice(0, 16);
 
@@ -370,16 +403,30 @@ export const RealLcd1602: React.FC<CompProps> = ({ comp, renderPin }) => {
         <div className="absolute bottom-0 left-4 w-2 h-0.5 bg-slate-400 rounded-xs" />
         <div className="absolute bottom-0 right-4 w-2 h-0.5 bg-slate-400 rounded-xs" />
 
-        {/* Backlit Display Matrix Area */}
-        <div className="w-full h-16 bg-[#7aa802] border border-[#557502] rounded-xs p-1 shadow-inner flex flex-col justify-around">
-          {/* Row 1 */}
-          <div className="text-[8.5px] font-mono font-black text-[#1a2e00] tracking-wider leading-none select-text">
-            {line1}
-          </div>
-          {/* Row 2 */}
-          <div className="text-[8.5px] font-mono font-black text-[#1a2e00] tracking-wider leading-none select-text">
-            {line2}
-          </div>
+        {/* Backlit Display Matrix Area - Active ONLY when powered! */}
+        <div
+          className={`w-full h-16 rounded-xs p-1 shadow-inner flex flex-col justify-around transition-colors duration-150 ${
+            isPowered
+              ? 'bg-[#7aa802] border border-[#557502]'
+              : 'bg-[#18200a] border border-[#101705]'
+          }`}
+        >
+          {isPowered ? (
+            <>
+              {/* Row 1 */}
+              <div className="text-[8.5px] font-mono font-black text-[#1a2e00] tracking-wider leading-none select-text">
+                {line1}
+              </div>
+              {/* Row 2 */}
+              <div className="text-[8.5px] font-mono font-black text-[#1a2e00] tracking-wider leading-none select-text">
+                {line2}
+              </div>
+            </>
+          ) : (
+            <div className="text-[7px] font-mono text-[#303e0d] text-center uppercase tracking-wider">
+              [ POWER OFF ]
+            </div>
+          )}
         </div>
       </div>
 

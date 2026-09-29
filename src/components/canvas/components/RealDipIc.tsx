@@ -37,9 +37,9 @@ export const RealDipIc: React.FC<CompProps> = ({ comp, pinStates, renderPin }) =
   const isWide = pinCount > 20;
 
   // Real-time runtime state
-  const isRunning = comp.runtimeState?.isRunning ?? false;
-  const outVoltage = comp.runtimeState?.outVoltage;
-  const stateSummary = comp.runtimeState?.stateSummary;
+  const isRunning = props.isRunning ?? comp.runtimeState?.isRunning ?? false;
+  const outVoltage = props.outVoltage ?? comp.runtimeState?.outVoltage;
+  const stateSummary = props.stateSummary ?? comp.runtimeState?.stateSummary;
 
   return (
     <div

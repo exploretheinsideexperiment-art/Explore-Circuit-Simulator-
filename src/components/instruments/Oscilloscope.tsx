@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { CircuitComponent, Wire } from '../../types';
 import { PinState } from '../../engine/circuit';
-import { getAllAvailablePins } from './instrumentUtils';
+import { getAllAvailablePins, resolveProbeTargetReading } from './instrumentUtils';
 import { FunctionGeneratorOutputState, WaveformType } from './FunctionGenerator';
 
 interface OscilloscopeProps {
@@ -20,6 +20,11 @@ interface OscilloscopeProps {
   forcedCh1Pin?: { compId: string; pinId: string } | null;
   onCh1PinChange?: (pin: { compId: string; pinId: string } | null) => void;
   onOpenFunctionGenerator?: () => void;
+  redProbe?: { compId?: string; pinId?: string; wireId?: string; label?: string } | null;
+  blackProbe?: { compId?: string; pinId?: string; wireId?: string; label?: string } | null;
+  onUpdateRedProbe?: (probe: any) => void;
+  onUpdateBlackProbe?: (probe: any) => void;
+  onPositionChange?: (pos: { x: number; y: number }) => void;
 }
 
 // Discrete voltage steps for vertical scale
@@ -41,12 +46,21 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   forcedCh1Pin,
   onCh1PinChange,
   onOpenFunctionGenerator,
+  redProbe: controlledRedProbe,
+  blackProbe: controlledBlackProbe,
+  onUpdateRedProbe,
+  onUpdateBlackProbe,
+  onPositionChange,
 }) => {
   // Draggable window state
   const [pos, setPos] = useState({ x: 260, y: 65 });
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef({ pointerX: 0, pointerY: 0, startX: 0, startY: 0 });
   const [isMinimized, setIsMinimized] = useState(false);
+
+  useEffect(() => {
+    onPositionChange?.(pos);
+  }, [pos, onPositionChange]);
 
   // Overall window scaling (0.65 to 1.25)
   const [scale, setScale] = useState<number>(0.85);
@@ -62,8 +76,26 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   const centerY = screenHeight / 2;
 
   // Probes attachment
-  const [ch1Pin, setCh1Pin] = useState<{ compId: string; pinId: string } | null>(null);
-  const [ch2Pin, setCh2Pin] = useState<{ compId: string; pinId: string } | null>(null);
+  const [internalCh1, setInternalCh1] = useState<{ compId: string; pinId: string } | null>(null);
+  const [internalCh2, setInternalCh2] = useState<{ compId: string; pinId: string } | null>(null);
+
+  const ch1Pin = controlledRedProbe && controlledRedProbe.compId && controlledRedProbe.pinId
+    ? { compId: controlledRedProbe.compId, pinId: controlledRedProbe.pinId }
+    : internalCh1;
+
+  const ch2Pin = controlledBlackProbe && controlledBlackProbe.compId && controlledBlackProbe.pinId
+    ? { compId: controlledBlackProbe.compId, pinId: controlledBlackProbe.pinId }
+    : internalCh2;
+
+  const setCh1Pin = (pin: { compId: string; pinId: string } | null) => {
+    if (onUpdateRedProbe) onUpdateRedProbe(pin ? { type: 'pin', compId: pin.compId, pinId: pin.pinId, label: `CH1 (${pin.pinId})` } : null);
+    setInternalCh1(pin);
+  };
+
+  const setCh2Pin = (pin: { compId: string; pinId: string } | null) => {
+    if (onUpdateBlackProbe) onUpdateBlackProbe(pin ? { type: 'pin', compId: pin.compId, pinId: pin.pinId, label: `CH2 (${pin.pinId})` } : null);
+    setInternalCh2(pin);
+  };
 
   // Channel enable
   const [ch1Enabled, setCh1Enabled] = useState(true);
@@ -134,21 +166,7 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
 
   const allPins = useMemo(() => getAllAvailablePins(components), [components]);
 
-  // Default probe attachment
-  useEffect(() => {
-    if (!ch1Pin && components.length > 0) {
-      const mcu = components.find((c) => c.type.startsWith('mcu-'));
-      if (mcu) {
-        setCh1Pin({ compId: mcu.id, pinId: '2' }); // GPIO 2
-        setCh2Pin({ compId: mcu.id, pinId: '4' }); // GPIO 4
-      } else if (allPins.length > 0) {
-        setCh1Pin({ compId: allPins[0].compId, pinId: allPins[0].pinId });
-        if (allPins.length > 1) {
-          setCh2Pin({ compId: allPins[1].compId, pinId: allPins[1].pinId });
-        }
-      }
-    }
-  }, [components, allPins]);
+  // Probes start disconnected by default - connect only when touched to a terminal or wire
 
   // Window pointer drag handlers
   const handlePointerDownHeader = (e: React.PointerEvent) => {
@@ -326,18 +344,19 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
     setBandwidthMode(modes[nextIdx]);
   };
 
-  // Signal calculations for CH1
+  // Signal calculations for CH1 (resolving terminals, pins, and wires)
   const isCh1DirectFg = ch1Pin?.compId === '__func_gen__' || ch1Pin?.compId === '__function_generator__';
   const canvasFgComp = components.find((c) => c.type === 'function-generator');
   const isCh1CanvasFg = Boolean(canvasFgComp && ch1Pin?.compId === canvasFgComp.id && ch1Pin?.pinId === 'OUT');
 
+  const ch1Resolved = resolveProbeTargetReading(controlledRedProbe || ch1Pin, pinStates, wires);
   const ch1Key = ch1Pin ? `${ch1Pin.compId}:${ch1Pin.pinId}` : '';
   const ch1State = (ch1Key && pinStates) ? pinStates[ch1Key] : null;
-  let ch1RawVoltage = ch1State?.voltage ?? 0;
-  let ch1Pwm = ch1State?.pwmDuty ?? 0;
-  let ch1IsAc = Boolean(ch1State?.isAc);
-  let ch1Waveform: WaveformType = (ch1State?.waveform as WaveformType) || 'sine';
-  let ch1FrequencyNum = ch1State?.frequency || 1000;
+  let ch1RawVoltage = ch1Resolved.isLive ? ch1Resolved.voltage : (ch1State?.voltage ?? 0);
+  let ch1Pwm = ch1Resolved.pwmDuty ?? ch1State?.pwmDuty ?? 0;
+  let ch1IsAc = Boolean(ch1Resolved.isAc || ch1State?.isAc);
+  let ch1Waveform: WaveformType = (ch1Resolved.waveform as WaveformType) || (ch1State?.waveform as WaveformType) || 'sine';
+  let ch1FrequencyNum = ch1Resolved.frequency || ch1State?.frequency || 1000;
   let ch1OffsetVal = ch1State?.offset ?? 0;
   let ch1DutyVal = ch1State?.duty ?? 50;
 
@@ -362,17 +381,18 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
     }
   }
 
-  // Signal calculations for CH2
+  // Signal calculations for CH2 (resolving terminals, pins, and wires)
   const isCh2DirectFg = ch2Pin?.compId === '__func_gen__' || ch2Pin?.compId === '__function_generator__';
   const isCh2CanvasFg = Boolean(canvasFgComp && ch2Pin?.compId === canvasFgComp.id && ch2Pin?.pinId === 'OUT');
 
+  const ch2Resolved = resolveProbeTargetReading(controlledBlackProbe || ch2Pin, pinStates, wires);
   const ch2Key = ch2Pin ? `${ch2Pin.compId}:${ch2Pin.pinId}` : '';
   const ch2State = (ch2Key && pinStates) ? pinStates[ch2Key] : null;
-  let ch2RawVoltage = ch2State?.voltage ?? 0;
-  let ch2Pwm = ch2State?.pwmDuty ?? 0;
-  let ch2IsAc = Boolean(ch2State?.isAc);
-  let ch2Waveform: WaveformType = (ch2State?.waveform as WaveformType) || 'sine';
-  let ch2FrequencyNum = ch2State?.frequency || 1000;
+  let ch2RawVoltage = ch2Resolved.isLive ? ch2Resolved.voltage : (ch2State?.voltage ?? 0);
+  let ch2Pwm = ch2Resolved.pwmDuty ?? ch2State?.pwmDuty ?? 0;
+  let ch2IsAc = Boolean(ch2Resolved.isAc || ch2State?.isAc);
+  let ch2Waveform: WaveformType = (ch2Resolved.waveform as WaveformType) || (ch2State?.waveform as WaveformType) || 'sine';
+  let ch2FrequencyNum = ch2Resolved.frequency || ch2State?.frequency || 1000;
   let ch2OffsetVal = ch2State?.offset ?? 0;
   let ch2DutyVal = ch2State?.duty ?? 50;
 
