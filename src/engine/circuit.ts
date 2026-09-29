@@ -2,10 +2,14 @@
  * Explore Circuit Simulator - Circuit Engine & Netlist Solver
  */
 import { CircuitComponent, Wire, SignalLevel, ElectricalWarning } from '../types';
-import { COMPONENT_CATALOG } from './peripherals/definitions';
+import { COMPONENT_CATALOG, getComponentPins } from './peripherals/definitions';
 import { SUPPORTED_BOARDS } from './mcu/boards';
 import { soundEngine } from './audio';
 import { findIcDefinition, TRANSISTOR_MODELS, DIODE_MODELS } from './peripherals/icLibrary';
+
+// Module-level transient state caches for dynamic analog components & ICs
+const capacitorStateCache = new Map<string, { storedVoltage: number; lastTime: number }>();
+const icTimingStateCache = new Map<string, { currentStep: number; lastClk: number; outVoltage: number; lastToggleTime: number; phase: boolean }>();
 
 export interface PinState {
   compId: string;
@@ -128,6 +132,8 @@ export function evaluateCircuit(
       const boardId = comp.properties?.boardId || 'esp32-devkit-v1';
       const board = SUPPORTED_BOARDS[boardId];
       if (board) pins = board.pins;
+    } else if (comp.type === 'ic-universal' || comp.type.startsWith('ic-')) {
+      pins = getComponentPins(comp);
     } else {
       const template = COMPONENT_CATALOG.find(c => c.type === comp.type);
       if (template) pins = template.pins;
@@ -564,371 +570,557 @@ export function evaluateCircuit(
   // Initial Net Propagation Pass
   propagateNets(adj, pinStates, warnings);
 
-  // Active Semiconductor Switching Pass (BJT, JFET, MOSFET, TRIAC, Diodes, Transformers)
-  let activeConductionAdded = false;
-
-  // Transformer Electromagnetic Induction Pass
-  for (const comp of components) {
-    if (comp.type === 'transformer') {
-      const p1 = pinStates[makePinKey(comp.id, 'PRI1')];
-      const p2 = pinStates[makePinKey(comp.id, 'PRI2')];
-      const vPri1 = p1?.voltage || 0;
-      const vPri2 = p2?.voltage || 0;
-      // Differential voltage across primary or single-ended Live AC voltage
-      let vPri = Math.abs(vPri1 - vPri2);
-      if (vPri === 0 && (vPri1 > 0 || vPri2 > 0)) {
-        vPri = Math.max(vPri1, vPri2);
-      }
-      const isAc = Boolean(p1?.isAc || p2?.isAc || vPri1 > 0 || vPri2 > 0);
-
-      const nomPri = Math.max(1, Number(comp.properties?.primaryVoltage) || 220);
-      const nomSec = Number(comp.properties?.secondaryVoltage) || 12;
-      const secType = comp.properties?.secondaryType || 'standard';
-
-      // Adaptive ratio for low-voltage test inputs (e.g. 12V AC source on default 220V transformer)
-      let ratio = nomSec / nomPri;
-      if (!comp.properties?.primaryVoltageExplicit && nomPri === 220 && vPri > 0 && vPri <= 24) {
-        ratio = nomSec / vPri; // Outputs full secondary rated voltage (12V) instead of 0.65V
-      }
-
-      if (vPri > 0) {
-        if (!isAc && vPri > 12) {
-          warnings.push({
-            id: `transformer-dc-${comp.id}`,
-            severity: 'warning',
-            title: 'DC Voltage on Transformer Primary!',
-            message: `${comp.properties?.label || 'T1'} is connected to DC power (${vPri}V). Transformers only work with Alternating Current (AC); DC will cause magnetic saturation and overheating!`,
-          });
+  // Helper: check if two pins are in the same electrical net (reached through wires, breadboard rows, switches)
+  function arePinsConnected(pinA: string, pinB: string): boolean {
+    if (pinA === pinB) return true;
+    const queue = [pinA];
+    const visited = new Set<string>([pinA]);
+    while (queue.length > 0) {
+      const u = queue.shift()!;
+      if (u === pinB) return true;
+      for (const v of adj[u] || []) {
+        if (!visited.has(v)) {
+          visited.add(v);
+          queue.push(v);
         }
-
-        // Induced secondary AC RMS voltage
-        const inducedSec = Math.max(0.5, Math.round(vPri * ratio * 10) / 10);
-        const freq = p1?.frequency || p2?.frequency || Number(comp.properties?.frequency) || 50;
-        const wave = p1?.waveform || p2?.waveform || 'sine';
-
-        const s1Key = makePinKey(comp.id, 'SEC1');
-        const ctKey = makePinKey(comp.id, 'SEC_CT');
-        const s2Key = makePinKey(comp.id, 'SEC2');
-
-        if (pinStates[s1Key]) {
-          pinStates[s1Key].voltage = inducedSec;
-          pinStates[s1Key].isDriven = true;
-          pinStates[s1Key].driverType = 'power';
-          pinStates[s1Key].signalLevel = 'POWER_VCC';
-          pinStates[s1Key].isAc = true;
-          pinStates[s1Key].frequency = freq;
-          pinStates[s1Key].waveform = wave;
-        }
-
-        if (secType === 'center-tapped') {
-          // In center-tapped transformer: SEC1 is +V_sec, SEC_CT is 0V reference, SEC2 is V_sec (180° phase)
-          if (pinStates[ctKey]) {
-            pinStates[ctKey].voltage = 0;
-            pinStates[ctKey].isDriven = true;
-            pinStates[ctKey].driverType = 'ground';
-            pinStates[ctKey].signalLevel = 'POWER_GND';
-            pinStates[ctKey].isAc = true;
-            pinStates[ctKey].frequency = freq;
-            pinStates[ctKey].waveform = wave;
-          }
-          if (pinStates[s2Key]) {
-            pinStates[s2Key].voltage = inducedSec;
-            pinStates[s2Key].isDriven = true;
-            pinStates[s2Key].driverType = 'power';
-            pinStates[s2Key].signalLevel = 'POWER_VCC';
-            pinStates[s2Key].isAc = true;
-            pinStates[s2Key].frequency = freq;
-            pinStates[s2Key].waveform = wave;
-          }
-        } else {
-          // Standard secondary (0 - V_sec)
-          if (pinStates[s2Key]) {
-            pinStates[s2Key].voltage = 0;
-            pinStates[s2Key].isDriven = true;
-            pinStates[s2Key].driverType = 'ground';
-            pinStates[s2Key].signalLevel = 'POWER_GND';
-            pinStates[s2Key].isAc = true;
-            pinStates[s2Key].frequency = freq;
-            pinStates[s2Key].waveform = wave;
-          }
-          if (pinStates[ctKey]) {
-            pinStates[ctKey].voltage = Math.round((inducedSec / 2) * 10) / 10;
-            pinStates[ctKey].isDriven = true;
-            pinStates[ctKey].driverType = 'power';
-            pinStates[ctKey].signalLevel = 'POWER_VCC';
-            pinStates[ctKey].isAc = true;
-            pinStates[ctKey].frequency = freq;
-            pinStates[ctKey].waveform = wave;
-          }
-        }
-
-        activeConductionAdded = true;
       }
     }
+    return false;
   }
-  for (const comp of components) {
-    if (comp.type === 'transistor-bjt-npn') {
-      const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
-      const vbeDrop = comp.properties?.vbeDrop ?? (modelDef?.vbeDrop ?? 0.65);
-      const vBase = pinStates[makePinKey(comp.id, 'BASE')]?.voltage || 0;
-      const vEmitter = pinStates[makePinKey(comp.id, 'EMITTER')]?.voltage || 0;
-      if (vBase - vEmitter >= vbeDrop) {
-        addEdge(makePinKey(comp.id, 'COLLECTOR'), makePinKey(comp.id, 'EMITTER'));
-        activeConductionAdded = true;
-      }
-    } else if (comp.type === 'transistor-bjt-pnp') {
-      const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
-      const vbeDrop = comp.properties?.vbeDrop ?? (modelDef?.vbeDrop ?? 0.65);
-      const vBase = pinStates[makePinKey(comp.id, 'BASE')]?.voltage || 0;
-      const vEmitter = pinStates[makePinKey(comp.id, 'EMITTER')]?.voltage || 0;
-      if (vEmitter - vBase >= vbeDrop) {
-        addEdge(makePinKey(comp.id, 'EMITTER'), makePinKey(comp.id, 'COLLECTOR'));
-        activeConductionAdded = true;
-      }
-    } else if (comp.type === 'transistor-jfet-n') {
-      const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
-      const vPinch = comp.properties?.vPinch ?? (modelDef?.vPinch ?? -2.5);
-      const vGate = pinStates[makePinKey(comp.id, 'GATE')]?.voltage || 0;
-      const vSource = pinStates[makePinKey(comp.id, 'SOURCE')]?.voltage || 0;
-      if (vGate - vSource >= vPinch) {
-        addEdge(makePinKey(comp.id, 'DRAIN'), makePinKey(comp.id, 'SOURCE'));
-        activeConductionAdded = true;
-      }
-    } else if (comp.type === 'transistor-mosfet-n') {
-      const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
-      const vth = comp.properties?.vth ?? (modelDef?.vth ?? 2.5);
-      const vGate = pinStates[makePinKey(comp.id, 'GATE')]?.voltage || 0;
-      const vSource = pinStates[makePinKey(comp.id, 'SOURCE')]?.voltage || 0;
-      if (vGate - vSource >= vth) {
-        addEdge(makePinKey(comp.id, 'DRAIN'), makePinKey(comp.id, 'SOURCE'));
-        activeConductionAdded = true;
-      }
-    } else if (comp.type === 'transistor-mosfet-p') {
-      const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
-      const vth = Math.abs(comp.properties?.vth ?? (modelDef?.vth ?? 2.5));
-      const vGate = pinStates[makePinKey(comp.id, 'GATE')]?.voltage || 0;
-      const vSource = pinStates[makePinKey(comp.id, 'SOURCE')]?.voltage || 0;
-      if (vSource - vGate >= vth) {
-        addEdge(makePinKey(comp.id, 'SOURCE'), makePinKey(comp.id, 'DRAIN'));
-        activeConductionAdded = true;
-      }
-    } else if (comp.type === 'transistor-triac') {
-      const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
-      const vGateTrigger = comp.properties?.vGateTrigger ?? (modelDef?.vGateTrigger ?? 1.2);
-      const vGate = pinStates[makePinKey(comp.id, 'GATE')]?.voltage || 0;
-      const vMt1 = pinStates[makePinKey(comp.id, 'MT1')]?.voltage || 0;
-      if (Math.abs(vGate - vMt1) >= vGateTrigger) {
-        addEdge(makePinKey(comp.id, 'MT1'), makePinKey(comp.id, 'MT2'));
-        activeConductionAdded = true;
-      }
-    } else if (comp.type === 'diode-pn' || comp.type === 'diode-schottky' || comp.type === 'diode-constant-current') {
-      const diodeDef = DIODE_MODELS.find(d => d.model === comp.properties?.model);
-      const fDrop = comp.properties?.forwardDrop ?? (diodeDef?.forwardDrop ?? (comp.type === 'diode-schottky' ? 0.25 : 0.65));
-      const aKey = makePinKey(comp.id, 'ANODE');
-      const cKey = makePinKey(comp.id, 'CATHODE');
-      const pAnode = pinStates[aKey];
-      const pCathode = pinStates[cKey];
-      const vAnode = pAnode?.voltage || 0;
-      const vCathode = pCathode?.voltage || 0;
 
-      // Diode conducts when Anode is positive and forward biased
-      if (vAnode >= fDrop && (vAnode >= vCathode || !pCathode?.isDriven)) {
-        const vOut = Math.max(0, Number((vAnode - fDrop).toFixed(2)));
-        if (pinStates[cKey]) {
-          pinStates[cKey].voltage = vOut;
-          pinStates[cKey].isDriven = true;
-          pinStates[cKey].driverType = 'power';
-          pinStates[cKey].signalLevel = vOut > 1.5 ? 'HIGH' : vOut > 0 ? 'LOW' : 'POWER_GND';
-          pinStates[cKey].isAc = false; // Diode rectifies AC into DC output!
-        }
-        activeConductionAdded = true;
-      }
-    } else if (comp.type === 'diode-zener') {
-      const diodeDef = DIODE_MODELS.find(d => d.model === comp.properties?.model);
-      const vz = comp.properties?.zenerVoltage ?? (diodeDef?.zenerVoltage ?? 5.1);
-      const aKey = makePinKey(comp.id, 'ANODE');
-      const cKey = makePinKey(comp.id, 'CATHODE');
-      const vAnode = pinStates[aKey]?.voltage || 0;
-      const vCathode = pinStates[cKey]?.voltage || 0;
+  // Multi-pass active simulation loop for cascaded semiconductors, capacitors, and ICs
+  for (let simPass = 0; simPass < 3; simPass++) {
+    let activeConductionAdded = false;
 
-      if (vAnode >= 0.65) {
-        // Forward bias: conducts with 0.65V drop
-        const vOut = Math.max(0, Number((vAnode - 0.65).toFixed(2)));
-        if (pinStates[cKey]) {
-          pinStates[cKey].voltage = vOut;
-          pinStates[cKey].isDriven = true;
-          pinStates[cKey].driverType = 'power';
-          pinStates[cKey].signalLevel = vOut > 1.5 ? 'HIGH' : 'POWER_GND';
-          pinStates[cKey].isAc = false;
+    // --- A. Dynamic Capacitor DC Charge & Discharge Simulation ---
+    for (const comp of components) {
+      if (comp.type === 'capacitor' || comp.type === 'capacitor-ceramic' || comp.type === 'capacitor-polyester') {
+        const isPolarized = comp.type === 'capacitor';
+        const posKey = isPolarized ? makePinKey(comp.id, 'POS') : makePinKey(comp.id, 'PIN1');
+        const negKey = isPolarized ? makePinKey(comp.id, 'NEG') : makePinKey(comp.id, 'PIN2');
+        const pPos = pinStates[posKey];
+        const pNeg = pinStates[negKey];
+
+        const now = Date.now();
+        const cached = capacitorStateCache.get(comp.id) || {
+          storedVoltage: Number(comp.runtimeState?.storedVoltage) || 0,
+          lastTime: now
+        };
+        const dt = Math.min(0.2, Math.max(0.005, (now - cached.lastTime) / 1000));
+        cached.lastTime = now;
+
+        const vPos = pPos?.voltage || 0;
+        const vNeg = pNeg?.voltage || 0;
+        const isExtPos = Boolean(pPos?.isDriven && pPos.driverType !== 'passive' && pPos.driverType !== 'ground');
+        const isExtNeg = Boolean(pNeg?.isDriven || pNeg?.signalLevel === 'POWER_GND' || pNeg?.driverType === 'ground');
+        const vApplied = Math.max(0, vPos - vNeg);
+
+        if (isExtPos && isExtNeg && vApplied > 0.2) {
+          // Actively charging from external power source
+          cached.storedVoltage = Math.min(vApplied, cached.storedVoltage + (vApplied - cached.storedVoltage) * Math.min(1.0, dt / 0.15));
+        } else if (cached.storedVoltage > 0.1 && (!isExtPos || vApplied < cached.storedVoltage - 0.2)) {
+          // External power disconnected or lower than stored voltage: CAPACITOR DISCHARGES INTO LOAD!
+          if (pinStates[posKey]) {
+            pinStates[posKey].voltage = Number(cached.storedVoltage.toFixed(2));
+            pinStates[posKey].isDriven = true;
+            pinStates[posKey].driverType = 'power';
+            pinStates[posKey].signalLevel = 'POWER_VCC';
+          }
+          if (pinStates[negKey] && !pinStates[negKey].isDriven) {
+            pinStates[negKey].voltage = 0;
+            pinStates[negKey].isDriven = true;
+            pinStates[negKey].driverType = 'ground';
+            pinStates[negKey].signalLevel = 'POWER_GND';
+          }
+          activeConductionAdded = true;
+
+          // Realistic discharge decay into connected load
+          const capVal = Math.max(1, Number(comp.properties?.capacitance) || (comp.type === 'capacitor' ? 100 : 1));
+          const tau = Math.max(0.8, Math.min(12.0, (capVal / 100) * 3.0));
+          cached.storedVoltage = Math.max(0, cached.storedVoltage * Math.exp(-dt / tau));
+          if (cached.storedVoltage < 0.05) cached.storedVoltage = 0;
         }
-        activeConductionAdded = true;
-      } else if (vCathode - vAnode >= vz) {
-        // Reverse breakdown: clamps cathode voltage to vz
-        if (pinStates[cKey]) {
-          pinStates[cKey].voltage = Number((vAnode + vz).toFixed(2));
-        }
-        activeConductionAdded = true;
-      }
-    } else if (comp.type === 'diode-diac') {
-      const diodeDef = DIODE_MODELS.find(d => d.model === comp.properties?.model);
-      const vbo = comp.properties?.breakoverVoltage ?? (diodeDef?.breakoverVoltage ?? 32.0);
-      const vT1 = pinStates[makePinKey(comp.id, 'T1')]?.voltage || 0;
-      const vT2 = pinStates[makePinKey(comp.id, 'T2')]?.voltage || 0;
-      if (Math.abs(vT1 - vT2) >= vbo) {
-        addEdge(makePinKey(comp.id, 'T1'), makePinKey(comp.id, 'T2'));
-        activeConductionAdded = true;
+
+        capacitorStateCache.set(comp.id, cached);
       }
     }
 
-    // ==========================================
-    // Integrated Circuits Behavioral Simulation (555, LM741, LM358, 74xx, CD4017, L293D, ULN2003, etc.)
-    // ==========================================
-    if (comp.type === 'ic-universal' || comp.type.startsWith('ic-') || comp.type.startsWith('logic-')) {
-      const rawNumber = (comp.properties?.icNumber || comp.properties?.partNumber || comp.type.replace('ic-', '') || '').toUpperCase();
-      const matched = findIcDefinition(rawNumber);
-      const icKey = matched?.partNumber || rawNumber || 'NE555';
-
-      const getPinV = (...pinNames: string[]): number => {
-        for (const name of pinNames) {
-          const key = makePinKey(comp.id, name);
-          if (pinStates[key] && pinStates[key].voltage !== undefined) return pinStates[key].voltage;
+    // --- B. Transformer Electromagnetic Induction Pass ---
+    for (const comp of components) {
+      if (comp.type === 'transformer') {
+        const p1 = pinStates[makePinKey(comp.id, 'PRI1')];
+        const p2 = pinStates[makePinKey(comp.id, 'PRI2')];
+        const vPri1 = p1?.voltage || 0;
+        const vPri2 = p2?.voltage || 0;
+        let vPri = Math.abs(vPri1 - vPri2);
+        if (vPri === 0 && (vPri1 > 0 || vPri2 > 0)) {
+          vPri = Math.max(vPri1, vPri2);
         }
-        return 0;
-      };
+        const isAc = Boolean(p1?.isAc || p2?.isAc || vPri1 > 0 || vPri2 > 0);
 
-      const drivePin = (pinId: string, voltage: number, isHigh?: boolean) => {
-        const key = makePinKey(comp.id, pinId);
-        if (pinStates[key]) {
-          pinStates[key].voltage = Math.max(0, Number(voltage.toFixed(2)));
-          pinStates[key].isDriven = true;
-          pinStates[key].driverType = 'power';
-          pinStates[key].signalLevel = isHigh ? 'HIGH' : voltage > 2.0 ? 'HIGH' : 'LOW';
+        const nomPri = Math.max(1, Number(comp.properties?.primaryVoltage) || 220);
+        const nomSec = Number(comp.properties?.secondaryVoltage) || 12;
+        const secType = comp.properties?.secondaryType || 'standard';
+
+        let ratio = nomSec / nomPri;
+        if (!comp.properties?.primaryVoltageExplicit && nomPri === 220 && vPri > 0 && vPri <= 24) {
+          ratio = nomSec / vPri;
+        }
+
+        if (vPri > 0) {
+          if (!isAc && vPri > 12) {
+            warnings.push({
+              id: `transformer-dc-${comp.id}`,
+              severity: 'warning',
+              title: 'DC Voltage on Transformer Primary!',
+              message: `${comp.properties?.label || 'T1'} is connected to DC power (${vPri}V). Transformers only work with Alternating Current (AC); DC will cause magnetic saturation and overheating!`,
+            });
+          }
+
+          const inducedSec = Math.max(0.5, Math.round(vPri * ratio * 10) / 10);
+          const freq = p1?.frequency || p2?.frequency || Number(comp.properties?.frequency) || 50;
+          const wave = p1?.waveform || p2?.waveform || 'sine';
+
+          const s1Key = makePinKey(comp.id, 'SEC1');
+          const ctKey = makePinKey(comp.id, 'SEC_CT');
+          const s2Key = makePinKey(comp.id, 'SEC2');
+
+          if (pinStates[s1Key]) {
+            pinStates[s1Key].voltage = inducedSec;
+            pinStates[s1Key].isDriven = true;
+            pinStates[s1Key].driverType = 'power';
+            pinStates[s1Key].signalLevel = 'POWER_VCC';
+            pinStates[s1Key].isAc = true;
+            pinStates[s1Key].frequency = freq;
+            pinStates[s1Key].waveform = wave;
+          }
+
+          if (secType === 'center-tapped') {
+            if (pinStates[ctKey]) {
+              pinStates[ctKey].voltage = 0;
+              pinStates[ctKey].isDriven = true;
+              pinStates[ctKey].driverType = 'ground';
+              pinStates[ctKey].signalLevel = 'POWER_GND';
+              pinStates[ctKey].isAc = true;
+              pinStates[ctKey].frequency = freq;
+              pinStates[ctKey].waveform = wave;
+            }
+            if (pinStates[s2Key]) {
+              pinStates[s2Key].voltage = inducedSec;
+              pinStates[s2Key].isDriven = true;
+              pinStates[s2Key].driverType = 'power';
+              pinStates[s2Key].signalLevel = 'POWER_VCC';
+              pinStates[s2Key].isAc = true;
+              pinStates[s2Key].frequency = freq;
+              pinStates[s2Key].waveform = wave;
+            }
+          } else {
+            if (pinStates[s2Key]) {
+              pinStates[s2Key].voltage = 0;
+              pinStates[s2Key].isDriven = true;
+              pinStates[s2Key].driverType = 'ground';
+              pinStates[s2Key].signalLevel = 'POWER_GND';
+              pinStates[s2Key].isAc = true;
+              pinStates[s2Key].frequency = freq;
+              pinStates[s2Key].waveform = wave;
+            }
+            if (pinStates[ctKey]) {
+              pinStates[ctKey].voltage = Math.round((inducedSec / 2) * 10) / 10;
+              pinStates[ctKey].isDriven = true;
+              pinStates[ctKey].driverType = 'power';
+              pinStates[ctKey].signalLevel = 'POWER_VCC';
+              pinStates[ctKey].isAc = true;
+              pinStates[ctKey].frequency = freq;
+              pinStates[ctKey].waveform = wave;
+            }
+          }
+
           activeConductionAdded = true;
         }
-      };
+      }
+    }
 
-      // 1. NE555 Timer Simulation
-      if (icKey.includes('555')) {
-        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_8')];
-        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_1')];
-        const has555Power = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 4.0 &&
-                            pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
+    // --- C. Real Active Transistors (NPN, PNP, MOSFET-N, MOSFET-P, JFET, TRIAC) ---
+    for (const comp of components) {
+      if (comp.type === 'transistor-bjt-npn') {
+        const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
+        const vbeDrop = comp.properties?.vbeDrop ?? (modelDef?.vbeDrop ?? 0.65);
+        const bKey = makePinKey(comp.id, 'BASE');
+        const eKey = makePinKey(comp.id, 'EMITTER');
+        const cKey = makePinKey(comp.id, 'COLLECTOR');
+        const vBase = pinStates[bKey]?.voltage || 0;
+        const vEmitter = pinStates[eKey]?.voltage || 0;
+        const vCollector = pinStates[cKey]?.voltage || 0;
 
-        if (has555Power) {
-          const vcc = pVcc.voltage;
-          const gnd = pGnd.voltage || 0;
-          const trig = getPinV('TRIG', 'PIN_2');
-          const thres = getPinV('THRES', 'PIN_6');
-          const resetKey = makePinKey(comp.id, 'RESET');
-          const pin4Key = makePinKey(comp.id, 'PIN_4');
-          const reset = (pinStates[resetKey]?.isDriven || pinStates[pin4Key]?.isDriven)
-            ? getPinV('RESET', 'PIN_4')
-            : vcc;
+        // NPN conducts when Base is higher than Emitter by at least vbeDrop (0.65V)
+        if (vBase - vEmitter >= vbeDrop) {
+          // Low-side switch: Collector is pulled down to near-emitter (V_CE(sat) ~ 0.12V)
+          // This sinks current and provides ground return for connected loads (LEDs, motors, relays)
+          if (pinStates[cKey]) {
+            pinStates[cKey].voltage = Number((vEmitter + 0.12).toFixed(2));
+            pinStates[cKey].isDriven = true;
+            pinStates[cKey].driverType = 'ground';
+            pinStates[cKey].signalLevel = 'LOW';
+            activeConductionAdded = true;
+          }
 
-          if (vcc - gnd >= 4.0) {
-            const vUpper = gnd + (2 / 3) * (vcc - gnd);
-            const vLower = gnd + (1 / 3) * (vcc - gnd);
-
-            // Check if connected in astable oscillation mode (TRIG tied to THRES)
-            const trigKey = makePinKey(comp.id, 'TRIG');
-            const thresKey = makePinKey(comp.id, 'THRES');
-            const isAstable = adj[trigKey]?.includes(thresKey) || adj[thresKey]?.includes(trigKey);
-
-            let outV = 0;
-            let isDischOn = false;
-
-            if (reset < gnd + 0.7) {
-              outV = gnd;
-              isDischOn = true;
-            } else if (isAstable) {
-              // Self-oscillating astable multivibrator mode
-              const now = Date.now();
-              const period = 500; // ms
-              const isHighPhase = (now % period) < period / 2;
-              outV = isHighPhase ? vcc - 1.3 : gnd;
-              isDischOn = !isHighPhase;
-            } else if (trig < vLower) {
-              outV = vcc - 1.3;
-              isDischOn = false;
-            } else if (thres > vUpper) {
-              outV = gnd;
-              isDischOn = true;
-            } else {
-              outV = comp.runtimeState?.outVoltage ?? (vcc - 1.3);
-              isDischOn = outV < gnd + 1.0;
-            }
-
-            drivePin('OUT', outV, outV > gnd + 2.0);
-            drivePin('PIN_3', outV, outV > gnd + 2.0);
-
-            if (isDischOn) {
-              addEdge(makePinKey(comp.id, 'DISCH'), makePinKey(comp.id, 'GND'));
-              addEdge(makePinKey(comp.id, 'PIN_7'), makePinKey(comp.id, 'PIN_1'));
+          // Emitter follower buffer: If Collector is tied to positive power and Emitter drives load
+          if (vCollector > vBase + 0.3 && (!pinStates[eKey]?.isDriven || pinStates[eKey]?.driverType === 'passive')) {
+            if (pinStates[eKey]) {
+              pinStates[eKey].voltage = Number(Math.max(0, vBase - vbeDrop).toFixed(2));
+              pinStates[eKey].isDriven = true;
+              pinStates[eKey].driverType = 'power';
+              pinStates[eKey].signalLevel = pinStates[eKey].voltage > 1.5 ? 'HIGH' : 'LOW';
               activeConductionAdded = true;
             }
           }
         }
+      } else if (comp.type === 'transistor-bjt-pnp') {
+        const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
+        const vbeDrop = comp.properties?.vbeDrop ?? (modelDef?.vbeDrop ?? 0.65);
+        const bKey = makePinKey(comp.id, 'BASE');
+        const eKey = makePinKey(comp.id, 'EMITTER');
+        const cKey = makePinKey(comp.id, 'COLLECTOR');
+        const vBase = pinStates[bKey]?.voltage || 0;
+        const vEmitter = pinStates[eKey]?.voltage || 0;
+
+        // PNP conducts when Base is pulled lower than Emitter by at least vbeDrop (0.65V)
+        if (vEmitter - vBase >= vbeDrop && vEmitter >= 1.0) {
+          // High-side switch: Emitter at VCC, Collector outputs V_E - 0.15V into load
+          if (pinStates[cKey]) {
+            pinStates[cKey].voltage = Number(Math.max(0, vEmitter - 0.15).toFixed(2));
+            pinStates[cKey].isDriven = true;
+            pinStates[cKey].driverType = 'power';
+            pinStates[cKey].signalLevel = 'POWER_VCC';
+            activeConductionAdded = true;
+          }
+        }
+      } else if (comp.type === 'transistor-mosfet-n') {
+        const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
+        const vth = comp.properties?.vth ?? (modelDef?.vth ?? 2.5);
+        const gKey = makePinKey(comp.id, 'GATE');
+        const sKey = makePinKey(comp.id, 'SOURCE');
+        const dKey = makePinKey(comp.id, 'DRAIN');
+        const vGate = pinStates[gKey]?.voltage || 0;
+        const vSource = pinStates[sKey]?.voltage || 0;
+
+        // Power N-MOSFET (e.g. IRF540N): Conducts when V_GS >= V_th
+        if (vGate - vSource >= vth) {
+          if (pinStates[dKey]) {
+            pinStates[dKey].voltage = Number((vSource + 0.05).toFixed(2));
+            pinStates[dKey].isDriven = true;
+            pinStates[dKey].driverType = 'ground';
+            pinStates[dKey].signalLevel = 'LOW';
+            activeConductionAdded = true;
+          }
+        }
+      } else if (comp.type === 'transistor-mosfet-p') {
+        const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
+        const vth = Math.abs(comp.properties?.vth ?? (modelDef?.vth ?? 2.5));
+        const gKey = makePinKey(comp.id, 'GATE');
+        const sKey = makePinKey(comp.id, 'SOURCE');
+        const dKey = makePinKey(comp.id, 'DRAIN');
+        const vGate = pinStates[gKey]?.voltage || 0;
+        const vSource = pinStates[sKey]?.voltage || 0;
+
+        // Power P-MOSFET (e.g. IRF9540): Conducts when V_SG >= |V_th|
+        if (vSource - vGate >= vth && vSource >= 1.0) {
+          if (pinStates[dKey]) {
+            pinStates[dKey].voltage = Number(Math.max(0, vSource - 0.05).toFixed(2));
+            pinStates[dKey].isDriven = true;
+            pinStates[dKey].driverType = 'power';
+            pinStates[dKey].signalLevel = 'POWER_VCC';
+            activeConductionAdded = true;
+          }
+        }
+      } else if (comp.type === 'transistor-jfet-n') {
+        const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
+        const vPinch = comp.properties?.vPinch ?? (modelDef?.vPinch ?? -2.5);
+        const gKey = makePinKey(comp.id, 'GATE');
+        const sKey = makePinKey(comp.id, 'SOURCE');
+        const dKey = makePinKey(comp.id, 'DRAIN');
+        const vGate = pinStates[gKey]?.voltage || 0;
+        const vSource = pinStates[sKey]?.voltage || 0;
+
+        // N-JFET conducts when V_GS >= V_pinch (normally ON at V_GS = 0)
+        if (vGate - vSource >= vPinch) {
+          if (pinStates[dKey]) {
+            pinStates[dKey].voltage = Number((vSource + 0.15).toFixed(2));
+            pinStates[dKey].isDriven = true;
+            pinStates[dKey].driverType = 'ground';
+            pinStates[dKey].signalLevel = 'LOW';
+            activeConductionAdded = true;
+          }
+        }
+      } else if (comp.type === 'transistor-triac') {
+        const modelDef = TRANSISTOR_MODELS.find(m => m.model === comp.properties?.model);
+        const vGateTrigger = comp.properties?.vGateTrigger ?? (modelDef?.vGateTrigger ?? 1.2);
+        const gKey = makePinKey(comp.id, 'GATE');
+        const mt1Key = makePinKey(comp.id, 'MT1');
+        const mt2Key = makePinKey(comp.id, 'MT2');
+        const vGate = pinStates[gKey]?.voltage || 0;
+        const vMt1 = pinStates[mt1Key]?.voltage || 0;
+        const vMt2 = pinStates[mt2Key]?.voltage || 0;
+
+        if (Math.abs(vGate - vMt1) >= vGateTrigger) {
+          if (pinStates[mt1Key]?.isDriven && !pinStates[mt2Key]?.isDriven) {
+            pinStates[mt2Key].voltage = vMt1;
+            pinStates[mt2Key].isDriven = true;
+            pinStates[mt2Key].driverType = pinStates[mt1Key].driverType;
+            pinStates[mt2Key].signalLevel = pinStates[mt1Key].signalLevel;
+            pinStates[mt2Key].isAc = pinStates[mt1Key].isAc;
+            activeConductionAdded = true;
+          } else if (pinStates[mt2Key]?.isDriven && !pinStates[mt1Key]?.isDriven) {
+            pinStates[mt1Key].voltage = vMt2;
+            pinStates[mt1Key].isDriven = true;
+            pinStates[mt1Key].driverType = pinStates[mt2Key].driverType;
+            pinStates[mt1Key].signalLevel = pinStates[mt2Key].signalLevel;
+            pinStates[mt1Key].isAc = pinStates[mt2Key].isAc;
+            activeConductionAdded = true;
+          }
+        }
+      } else if (comp.type === 'diode-pn' || comp.type === 'diode-schottky' || comp.type === 'diode-constant-current') {
+        const diodeDef = DIODE_MODELS.find(d => d.model === comp.properties?.model);
+        const fDrop = comp.properties?.forwardDrop ?? (diodeDef?.forwardDrop ?? (comp.type === 'diode-schottky' ? 0.25 : 0.65));
+        const aKey = makePinKey(comp.id, 'ANODE');
+        const cKey = makePinKey(comp.id, 'CATHODE');
+        const pAnode = pinStates[aKey];
+        const pCathode = pinStates[cKey];
+        const vAnode = pAnode?.voltage || 0;
+        const vCathode = pCathode?.voltage || 0;
+
+        if (vAnode >= fDrop && (vAnode >= vCathode || !pCathode?.isDriven)) {
+          const vOut = Math.max(0, Number((vAnode - fDrop).toFixed(2)));
+          if (pinStates[cKey]) {
+            pinStates[cKey].voltage = vOut;
+            pinStates[cKey].isDriven = true;
+            pinStates[cKey].driverType = 'power';
+            pinStates[cKey].signalLevel = vOut > 1.5 ? 'HIGH' : vOut > 0 ? 'LOW' : 'POWER_GND';
+            pinStates[cKey].isAc = false;
+            activeConductionAdded = true;
+          }
+        }
+      } else if (comp.type === 'diode-zener') {
+        const diodeDef = DIODE_MODELS.find(d => d.model === comp.properties?.model);
+        const vz = comp.properties?.zenerVoltage ?? (diodeDef?.zenerVoltage ?? 5.1);
+        const aKey = makePinKey(comp.id, 'ANODE');
+        const cKey = makePinKey(comp.id, 'CATHODE');
+        const vAnode = pinStates[aKey]?.voltage || 0;
+        const vCathode = pinStates[cKey]?.voltage || 0;
+
+        if (vAnode >= 0.65) {
+          const vOut = Math.max(0, Number((vAnode - 0.65).toFixed(2)));
+          if (pinStates[cKey]) {
+            pinStates[cKey].voltage = vOut;
+            pinStates[cKey].isDriven = true;
+            pinStates[cKey].driverType = 'power';
+            pinStates[cKey].signalLevel = vOut > 1.5 ? 'HIGH' : 'POWER_GND';
+            pinStates[cKey].isAc = false;
+            activeConductionAdded = true;
+          }
+        } else if (vCathode - vAnode >= vz) {
+          if (pinStates[cKey]) {
+            pinStates[cKey].voltage = Number((vAnode + vz).toFixed(2));
+            activeConductionAdded = true;
+          }
+        }
+      } else if (comp.type === 'diode-diac') {
+        const diodeDef = DIODE_MODELS.find(d => d.model === comp.properties?.model);
+        const vbo = comp.properties?.breakoverVoltage ?? (diodeDef?.breakoverVoltage ?? 32.0);
+        const vT1 = pinStates[makePinKey(comp.id, 'T1')]?.voltage || 0;
+        const vT2 = pinStates[makePinKey(comp.id, 'T2')]?.voltage || 0;
+        if (Math.abs(vT1 - vT2) >= vbo) {
+          addEdge(makePinKey(comp.id, 'T1'), makePinKey(comp.id, 'T2'));
+          activeConductionAdded = true;
+        }
       }
+    }
 
-      // 2. LM741 Single Operational Amplifier
-      else if (icKey.includes('741')) {
-        const pPos = pinStates[makePinKey(comp.id, 'V_POS')] || pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_7')];
-        const pNeg = pinStates[makePinKey(comp.id, 'V_NEG')] || pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_4')];
-        const has741Power = pPos && pPos.signalLevel !== 'FLOATING' && pPos.voltage >= 3.0 &&
-                            pNeg && (pNeg.signalLevel === 'POWER_GND' || pNeg.signalLevel === 'LOW' || pNeg.signalLevel !== 'FLOATING');
+    // --- D. Integrated Circuits Behavioral Simulation (555, LM741, LM358, LM324, LM386, Logic Gates, CD4017, L293D, ULN2003) ---
+    for (const comp of components) {
+      if (comp.type === 'ic-universal' || comp.type.startsWith('ic-') || comp.type.startsWith('logic-')) {
+        const rawNumber = (comp.properties?.icNumber || comp.properties?.partNumber || comp.type.replace('ic-', '') || '').toUpperCase();
+        const matched = findIcDefinition(rawNumber);
+        const icKey = matched?.partNumber || rawNumber || 'NE555';
 
-        if (has741Power) {
-          const vPos = pPos.voltage;
-          const vNeg = pNeg.voltage || 0;
-          const inPos = getPinV('IN_POS', 'PIN_3');
-          const inNeg = getPinV('IN_NEG', 'PIN_2');
+        const getPinV = (...pinNames: string[]): number => {
+          for (const name of pinNames) {
+            const key = makePinKey(comp.id, name);
+            if (pinStates[key] && pinStates[key].voltage !== undefined) return pinStates[key].voltage;
+          }
+          return 0;
+        };
 
-          if (vPos - vNeg >= 3.0) {
+        const drivePin = (pinId: string, voltage: number, isHigh?: boolean) => {
+          const key = makePinKey(comp.id, pinId);
+          if (pinStates[key]) {
+            pinStates[key].voltage = Math.max(0, Number(voltage.toFixed(2)));
+            pinStates[key].isDriven = true;
+            pinStates[key].driverType = voltage > 0.5 ? 'power' : 'ground';
+            pinStates[key].signalLevel = isHigh ? 'HIGH' : voltage > 2.0 ? 'HIGH' : voltage > 0.3 ? 'LOW' : 'POWER_GND';
+            activeConductionAdded = true;
+          }
+        };
+
+        // 1. NE555 Precision Timer Simulation
+        if (icKey.includes('555')) {
+          const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_8')];
+          const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_1')];
+          const has555Power = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 4.0 &&
+                              pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW' || pGnd.voltage <= 1.0);
+
+          if (has555Power) {
+            const vcc = pVcc.voltage;
+            const gnd = pGnd.voltage || 0;
+            const trig = getPinV('TRIG', 'PIN_2');
+            const thres = getPinV('THRES', 'PIN_6');
+            const resetKey = makePinKey(comp.id, 'RESET');
+            const pin4Key = makePinKey(comp.id, 'PIN_4');
+            const reset = (pinStates[resetKey]?.isDriven || pinStates[pin4Key]?.isDriven)
+              ? getPinV('RESET', 'PIN_4')
+              : vcc;
+
+            if (vcc - gnd >= 4.0) {
+              const vUpper = gnd + (2 / 3) * (vcc - gnd);
+              const vLower = gnd + (1 / 3) * (vcc - gnd);
+
+              // Check if connected in astable oscillation mode (TRIG connected to THRES through wires, breadboard rows, or resistor)
+              const trigKey = makePinKey(comp.id, 'TRIG');
+              const thresKey = makePinKey(comp.id, 'THRES');
+              const pin2Key = makePinKey(comp.id, 'PIN_2');
+              const pin6Key = makePinKey(comp.id, 'PIN_6');
+              const isAstable = arePinsConnected(trigKey, thresKey) ||
+                                arePinsConnected(pin2Key, pin6Key) ||
+                                arePinsConnected(trigKey, pin6Key) ||
+                                arePinsConnected(pin2Key, thresKey);
+
+              let outV = 0;
+              let isDischOn = false;
+
+              if (reset < gnd + 0.7) {
+                outV = gnd;
+                isDischOn = true;
+              } else if (isAstable) {
+                // Astable Multivibrator: clean oscillation at ~1.5Hz so the user sees real pulsing
+                const now = Date.now();
+                const period = 660; // ms
+                const isHighPhase = (now % period) < period / 2;
+                outV = isHighPhase ? vcc - 1.3 : gnd;
+                isDischOn = !isHighPhase;
+              } else if (trig < vLower) {
+                outV = vcc - 1.3;
+                isDischOn = false;
+              } else if (thres > vUpper) {
+                outV = gnd;
+                isDischOn = true;
+              } else {
+                outV = comp.runtimeState?.outVoltage ?? (vcc - 1.3);
+                isDischOn = outV < gnd + 1.0;
+              }
+
+              drivePin('OUT', outV, outV > gnd + 2.0);
+              drivePin('PIN_3', outV, outV > gnd + 2.0);
+
+              if (isDischOn) {
+                drivePin('DISCH', gnd, false);
+                drivePin('PIN_7', gnd, false);
+              }
+            }
+          }
+        }
+
+        // 2. LM741 Single Operational Amplifier
+        else if (icKey.includes('741')) {
+          const pPos = pinStates[makePinKey(comp.id, 'V_POS')] || pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_7')];
+          const pNeg = pinStates[makePinKey(comp.id, 'V_NEG')] || pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_4')];
+          const has741Power = pPos && pPos.signalLevel !== 'FLOATING' && pPos.voltage >= 3.0 &&
+                              pNeg && (pNeg.signalLevel === 'POWER_GND' || pNeg.signalLevel === 'LOW' || pNeg.voltage <= 1.0);
+
+          if (has741Power) {
+            const vPos = pPos.voltage;
+            const vNeg = pNeg.voltage || 0;
+            const inPos = getPinV('IN_POS', 'PIN_3');
+            const inNeg = getPinV('IN_NEG', 'PIN_2');
             const diff = inPos - inNeg;
-            const outV = diff > 0.01 ? vPos - 1.2 : diff < -0.01 ? vNeg + 0.5 : (vPos + vNeg) / 2;
+            const outV = diff > 0.02 ? vPos - 1.2 : diff < -0.02 ? vNeg + 0.1 : (vPos + vNeg) / 2;
             drivePin('OUT', outV);
             drivePin('PIN_6', outV);
           }
         }
-      }
 
-      // 3. LM358 Dual Operational Amplifier
-      else if (icKey.includes('358') || icKey.includes('5532')) {
-        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_8')];
-        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_4')];
-        const has358Power = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 3.0 &&
-                            pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
+        // 3. LM358 Dual Operational Amplifier
+        else if (icKey.includes('358') || icKey.includes('5532')) {
+          const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_8')];
+          const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_4')];
+          const has358Power = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 3.0 &&
+                              pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW' || pGnd.voltage <= 1.0);
 
-        if (has358Power) {
-          const vcc = pVcc.voltage;
-          const gnd = pGnd.voltage || 0;
-          if (vcc - gnd >= 3.0) {
-            const diff1 = getPinV('IN1_POS', 'PIN_3') - getPinV('IN1_NEG', 'PIN_2');
-            const out1 = diff1 > 0.01 ? vcc - 1.2 : diff1 < -0.01 ? gnd : (vcc + gnd) / 2;
+          if (has358Power) {
+            const vcc = pVcc.voltage;
+            const gnd = pGnd.voltage || 0;
+            // Op-Amp Channel 1
+            const diff1 = getPinV('IN1_POS', '1IN+', 'PIN_3') - getPinV('IN1_NEG', '1IN-', 'PIN_2');
+            const out1 = diff1 > 0.02 ? vcc - 1.2 : diff1 < -0.02 ? gnd + 0.1 : (vcc + gnd) / 2;
             drivePin('OUT1', out1);
             drivePin('1OUT', out1);
             drivePin('PIN_1', out1);
 
-            const diff2 = getPinV('IN2_POS', 'PIN_5') - getPinV('IN2_NEG', 'PIN_6');
-            const out2 = diff2 > 0.01 ? vcc - 1.2 : diff2 < -0.01 ? gnd : (vcc + gnd) / 2;
+            // Op-Amp Channel 2
+            const diff2 = getPinV('IN2_POS', '2IN+', 'PIN_5') - getPinV('IN2_NEG', '2IN-', 'PIN_6');
+            const out2 = diff2 > 0.02 ? vcc - 1.2 : diff2 < -0.02 ? gnd + 0.1 : (vcc + gnd) / 2;
             drivePin('OUT2', out2);
             drivePin('2OUT', out2);
             drivePin('PIN_7', out2);
           }
         }
-      }
 
-      // 4. LM386 Audio Power Amplifier
-      else if (icKey.includes('386')) {
-        const pVs = pinStates[makePinKey(comp.id, 'VS')] || pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_6')];
-        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_4')];
-        const has386Power = pVs && pVs.signalLevel !== 'FLOATING' && pVs.voltage >= 4.0 &&
-                            pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
+        // 4. LM324 Quad Operational Amplifier (DIP-14)
+        else if (icKey.includes('324')) {
+          const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_4')];
+          const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_11')];
+          const has324Power = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 3.0 &&
+                              pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW' || pGnd.voltage <= 1.0);
 
-        if (has386Power) {
-          const vs = pVs.voltage;
-          const gnd = pGnd.voltage || 0;
-          if (vs - gnd >= 4.0) {
+          if (has324Power) {
+            const vcc = pVcc.voltage;
+            const gnd = pGnd.voltage || 0;
+            const opAmp = (inPos: number, inNeg: number) => {
+              const diff = inPos - inNeg;
+              return diff > 0.02 ? vcc - 1.2 : diff < -0.02 ? gnd + 0.1 : (vcc + gnd) / 2;
+            };
+
+            // Ch 1: 1OUT (Pin 1), 1IN- (Pin 2), 1IN+ (Pin 3)
+            const o1 = opAmp(getPinV('1IN+', 'PIN_3'), getPinV('1IN-', 'PIN_2'));
+            drivePin('1OUT', o1);
+            drivePin('PIN_1', o1);
+
+            // Ch 2: 2OUT (Pin 7), 2IN- (Pin 6), 2IN+ (Pin 5)
+            const o2 = opAmp(getPinV('2IN+', 'PIN_5'), getPinV('2IN-', 'PIN_6'));
+            drivePin('2OUT', o2);
+            drivePin('PIN_7', o2);
+
+            // Ch 3: 3OUT (Pin 8), 3IN- (Pin 9), 3IN+ (Pin 10)
+            const o3 = opAmp(getPinV('3IN+', 'PIN_10'), getPinV('3IN-', 'PIN_9'));
+            drivePin('3OUT', o3);
+            drivePin('PIN_8', o3);
+
+            // Ch 4: 4OUT (Pin 14), 4IN- (Pin 13), 4IN+ (Pin 12)
+            const o4 = opAmp(getPinV('4IN+', 'PIN_12'), getPinV('4IN-', 'PIN_13'));
+            drivePin('4OUT', o4);
+            drivePin('PIN_14', o4);
+          }
+        }
+
+        // 5. LM386 Audio Power Amplifier
+        else if (icKey.includes('386')) {
+          const pVs = pinStates[makePinKey(comp.id, 'VS')] || pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_6')];
+          const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_4')];
+          const has386Power = pVs && pVs.signalLevel !== 'FLOATING' && pVs.voltage >= 4.0 &&
+                              pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW' || pGnd.voltage <= 1.0);
+
+          if (has386Power) {
+            const vs = pVs.voltage;
+            const gnd = pGnd.voltage || 0;
             const inSig = getPinV('IN_POS', '+IN', 'PIN_3') - getPinV('IN_NEG', '-IN', 'PIN_2');
             const mid = (vs + gnd) / 2;
             const outV = Math.max(gnd, Math.min(vs, mid + inSig * 10));
@@ -936,145 +1128,153 @@ export function evaluateCircuit(
             drivePin('PIN_5', outV);
           }
         }
-      }
 
-      // 5. Digital Logic Gates (74HC00, 74HC02, 74HC04, 74HC08, 74HC32, 74HC86)
-      else if (icKey.includes('7400') || icKey.includes('74HC00') || icKey.includes('4011')) {
-        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
-        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_7')];
-        const hasGatePower = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 2.0 &&
-                             pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
-        const vcc = hasGatePower ? (pVcc.voltage || 5.0) : 0;
-        if (vcc >= 2.0) {
+        // 6. Digital Logic NOT Inverter (Standalone logic-not or 74HC04)
+        else if (icKey.includes('7404') || icKey.includes('74HC04') || icKey.includes('4069') || comp.type === 'logic-not') {
+          const isStandalone = comp.type === 'logic-not';
+          const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
+          const vcc = isStandalone ? 5.0 : (pVcc?.voltage || 5.0);
+
+          if (isStandalone) {
+            const inV = getPinV('IN', 'PIN_1', '1A');
+            drivePin('OUT', inV < 1.8 ? 5.0 : 0.0);
+          } else {
+            drivePin('1Y', getPinV('1A', 'PIN_1') < 1.8 ? vcc : 0);
+            drivePin('2Y', getPinV('2A', 'PIN_3') < 1.8 ? vcc : 0);
+            drivePin('3Y', getPinV('3A', 'PIN_5') < 1.8 ? vcc : 0);
+            drivePin('4Y', getPinV('4A', 'PIN_9') < 1.8 ? vcc : 0);
+            drivePin('5Y', getPinV('5A', 'PIN_11') < 1.8 ? vcc : 0);
+            drivePin('6Y', getPinV('6A', 'PIN_13') < 1.8 ? vcc : 0);
+          }
+        }
+
+        // 7. Digital Logic AND Gate (Standalone logic-and or 74HC08)
+        else if (icKey.includes('7408') || icKey.includes('74HC08') || comp.type === 'logic-and') {
+          const isStandalone = comp.type === 'logic-and';
+          const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
+          const vcc = isStandalone ? 5.0 : (pVcc?.voltage || 5.0);
+          const and = (a: number, b: number) => a >= 1.8 && b >= 1.8;
+
+          if (isStandalone) {
+            const a = getPinV('IN_A', '1A', 'PIN_1');
+            const b = getPinV('IN_B', '1B', 'PIN_2');
+            drivePin('OUT', and(a, b) ? 5.0 : 0.0);
+          } else {
+            drivePin('1Y', and(getPinV('1A', 'PIN_1'), getPinV('1B', 'PIN_2')) ? vcc : 0);
+            drivePin('2Y', and(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
+            drivePin('3Y', and(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
+            drivePin('4Y', and(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
+          }
+        }
+
+        // 8. Digital Logic OR Gate (Standalone logic-or or 74HC32)
+        else if (icKey.includes('7432') || icKey.includes('74HC32') || comp.type === 'logic-or') {
+          const isStandalone = comp.type === 'logic-or';
+          const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
+          const vcc = isStandalone ? 5.0 : (pVcc?.voltage || 5.0);
+          const or = (a: number, b: number) => a >= 1.8 || b >= 1.8;
+
+          if (isStandalone) {
+            const a = getPinV('IN_A', '1A', 'PIN_1');
+            const b = getPinV('IN_B', '1B', 'PIN_2');
+            drivePin('OUT', or(a, b) ? 5.0 : 0.0);
+          } else {
+            drivePin('1Y', or(getPinV('1A', 'PIN_1'), getPinV('1B', 'PIN_2')) ? vcc : 0);
+            drivePin('2Y', or(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
+            drivePin('3Y', or(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
+            drivePin('4Y', or(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
+          }
+        }
+
+        // 9. Digital Logic NAND Gate (74HC00)
+        else if (icKey.includes('7400') || icKey.includes('74HC00') || icKey.includes('4011')) {
+          const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
+          const vcc = pVcc?.voltage || 5.0;
           const nand = (a: number, b: number) => !(a >= 1.8 && b >= 1.8);
           drivePin('1Y', nand(getPinV('1A', 'PIN_1'), getPinV('1B', 'PIN_2')) ? vcc : 0);
           drivePin('2Y', nand(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
           drivePin('3Y', nand(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
           drivePin('4Y', nand(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
         }
-      } else if (icKey.includes('7404') || icKey.includes('74HC04') || icKey.includes('4069') || comp.type === 'logic-not') {
-        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
-        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_7')];
-        const hasGatePower = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 2.0 &&
-                             pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
-        const vcc = hasGatePower ? (pVcc.voltage || 5.0) : 0;
-        if (vcc >= 2.0) {
-          drivePin('1Y', getPinV('1A', 'IN', 'PIN_1') < 1.8 ? vcc : 0);
-          drivePin('2Y', getPinV('2A', 'PIN_3') < 1.8 ? vcc : 0);
-          drivePin('3Y', getPinV('3A', 'PIN_5') < 1.8 ? vcc : 0);
-          drivePin('4Y', getPinV('4A', 'PIN_9') < 1.8 ? vcc : 0);
-          drivePin('5Y', getPinV('5A', 'PIN_11') < 1.8 ? vcc : 0);
-          drivePin('6Y', getPinV('6A', 'PIN_13') < 1.8 ? vcc : 0);
-          drivePin('OUT', getPinV('IN', 'PIN_1') < 1.8 ? vcc : 0);
-        }
-      } else if (icKey.includes('7408') || icKey.includes('74HC08') || comp.type === 'logic-and') {
-        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
-        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_7')];
-        const hasGatePower = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 2.0 &&
-                             pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
-        const vcc = hasGatePower ? (pVcc.voltage || 5.0) : 0;
-        if (vcc >= 2.0) {
-          const and = (a: number, b: number) => a >= 1.8 && b >= 1.8;
-          drivePin('1Y', and(getPinV('1A', 'IN_A', 'PIN_1'), getPinV('1B', 'IN_B', 'PIN_2')) ? vcc : 0);
-          drivePin('2Y', and(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
-          drivePin('3Y', and(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
-          drivePin('4Y', and(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
-          drivePin('OUT', and(getPinV('IN_A', '1A', 'PIN_1'), getPinV('IN_B', '1B', 'PIN_2')) ? vcc : 0);
-        }
-      } else if (icKey.includes('7432') || icKey.includes('74HC32') || comp.type === 'logic-or') {
-        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
-        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_7')];
-        const hasGatePower = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 2.0 &&
-                             pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
-        const vcc = hasGatePower ? (pVcc.voltage || 5.0) : 0;
-        if (vcc >= 2.0) {
-          const or = (a: number, b: number) => a >= 1.8 || b >= 1.8;
-          drivePin('1Y', or(getPinV('1A', 'IN_A', 'PIN_1'), getPinV('1B', 'IN_B', 'PIN_2')) ? vcc : 0);
-          drivePin('2Y', or(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
-          drivePin('3Y', or(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
-          drivePin('4Y', or(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
-          drivePin('OUT', or(getPinV('IN_A', '1A', 'PIN_1'), getPinV('IN_B', '1B', 'PIN_2')) ? vcc : 0);
-        }
-      } else if (icKey.includes('7486') || icKey.includes('74HC86')) {
-        const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
-        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_7')];
-        const hasGatePower = pVcc && pVcc.signalLevel !== 'FLOATING' && pVcc.voltage >= 2.0 &&
-                             pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
-        const vcc = hasGatePower ? (pVcc.voltage || 5.0) : 0;
-        if (vcc >= 2.0) {
+
+        // 10. Digital Logic XOR Gate (74HC86)
+        else if (icKey.includes('7486') || icKey.includes('74HC86')) {
+          const pVcc = pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_14')];
+          const vcc = pVcc?.voltage || 5.0;
           const xor = (a: number, b: number) => (a >= 1.8) !== (b >= 1.8);
           drivePin('1Y', xor(getPinV('1A', 'PIN_1'), getPinV('1B', 'PIN_2')) ? vcc : 0);
           drivePin('2Y', xor(getPinV('2A', 'PIN_4'), getPinV('2B', 'PIN_5')) ? vcc : 0);
           drivePin('3Y', xor(getPinV('3A', 'PIN_9'), getPinV('3B', 'PIN_10')) ? vcc : 0);
           drivePin('4Y', xor(getPinV('4A', 'PIN_12'), getPinV('4B', 'PIN_13')) ? vcc : 0);
         }
-      }
 
-      // 6. CD4017 Decade Counter
-      else if (icKey.includes('4017')) {
-        const pVdd = pinStates[makePinKey(comp.id, 'VDD')] || pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_16')];
-        const pGnd = pinStates[makePinKey(comp.id, 'GND')] || pinStates[makePinKey(comp.id, 'PIN_8')];
-        const hasCounterPower = pVdd && pVdd.signalLevel !== 'FLOATING' && pVdd.voltage >= 3.0 &&
-                                pGnd && (pGnd.signalLevel === 'POWER_GND' || pGnd.signalLevel === 'LOW');
-        const vdd = hasCounterPower ? (pVdd.voltage || 5.0) : 0;
-        if (vdd >= 3.0) {
+        // 11. CD4017 Decade Counter
+        else if (icKey.includes('4017')) {
+          const pVdd = pinStates[makePinKey(comp.id, 'VDD')] || pinStates[makePinKey(comp.id, 'VCC')] || pinStates[makePinKey(comp.id, 'PIN_16')];
+          const vdd = pVdd?.voltage || 5.0;
           const clk = getPinV('CLOCK', 'CLK', 'PIN_14');
           const rst = getPinV('RESET', 'RST', 'PIN_15');
-          let currentStep = comp.runtimeState?.currentStep || 0;
+          const cached = icTimingStateCache.get(comp.id) || { currentStep: 0, lastClk: 0, outVoltage: 0, lastToggleTime: 0, phase: false };
 
           if (rst >= 2.0) {
-            currentStep = 0;
-          } else if (clk >= 2.0 && !(comp.runtimeState?.lastClk >= 2.0)) {
-            currentStep = (currentStep + 1) % 10;
+            cached.currentStep = 0;
+          } else if (clk >= 2.0 && cached.lastClk < 2.0) {
+            cached.currentStep = (cached.currentStep + 1) % 10;
           }
+          cached.lastClk = clk;
+          icTimingStateCache.set(comp.id, cached);
 
           for (let i = 0; i < 10; i++) {
-            drivePin(`Q${i}`, i === currentStep ? vdd : 0);
+            drivePin(`Q${i}`, i === cached.currentStep ? vdd : 0);
           }
         }
-      }
 
-      // 7. L293D Dual H-Bridge Motor Driver
-      else if (icKey.includes('293')) {
-        const vcc1 = getPinV('VCC1', 'PIN_16') || 5.0;
-        const vcc2 = getPinV('VCC2', 'PIN_8') || vcc1;
-        const en12 = getPinV('1_2EN', '1,2EN', 'PIN_1');
-        const en34 = getPinV('3_4EN', '3,4EN', 'PIN_9');
+        // 12. L293D Dual H-Bridge Motor Driver
+        else if (icKey.includes('293')) {
+          const vcc1 = getPinV('VCC1', 'PIN_16') || 5.0;
+          const vcc2 = getPinV('VCC2', 'PIN_8') || vcc1;
+          const en12 = getPinV('1_2EN', '1,2EN', 'PIN_1');
+          const en34 = getPinV('3_4EN', '3,4EN', 'PIN_9');
 
-        if (en12 >= 1.8) {
-          drivePin('1Y', getPinV('1A', 'PIN_2') >= 1.8 ? vcc2 : 0);
-          drivePin('2Y', getPinV('2A', 'PIN_7') >= 1.8 ? vcc2 : 0);
-        } else {
-          drivePin('1Y', 0);
-          drivePin('2Y', 0);
+          if (en12 >= 1.8) {
+            drivePin('1Y', getPinV('1A', 'PIN_2') >= 1.8 ? vcc2 : 0);
+            drivePin('2Y', getPinV('2A', 'PIN_7') >= 1.8 ? vcc2 : 0);
+          } else {
+            drivePin('1Y', 0);
+            drivePin('2Y', 0);
+          }
+
+          if (en34 >= 1.8) {
+            drivePin('3Y', getPinV('3A', 'PIN_10') >= 1.8 ? vcc2 : 0);
+            drivePin('4Y', getPinV('4A', 'PIN_15') >= 1.8 ? vcc2 : 0);
+          } else {
+            drivePin('3Y', 0);
+            drivePin('4Y', 0);
+          }
         }
 
-        if (en34 >= 1.8) {
-          drivePin('3Y', getPinV('3A', 'PIN_10') >= 1.8 ? vcc2 : 0);
-          drivePin('4Y', getPinV('4A', 'PIN_15') >= 1.8 ? vcc2 : 0);
-        } else {
-          drivePin('3Y', 0);
-          drivePin('4Y', 0);
-        }
-      }
-
-      // 8. ULN2003A 7-Channel Darlington Driver
-      else if (icKey.includes('2003')) {
-        for (let i = 1; i <= 7; i++) {
-          const inV = getPinV(`IN${i}`, `PIN_${i}`);
-          if (inV >= 1.5) {
-            addEdge(makePinKey(comp.id, `OUT${i}`), makePinKey(comp.id, 'GND'));
-            addEdge(makePinKey(comp.id, `PIN_${17 - i}`), makePinKey(comp.id, 'PIN_8'));
-            activeConductionAdded = true;
+        // 13. ULN2003A 7-Channel Darlington Driver
+        else if (icKey.includes('2003')) {
+          for (let i = 1; i <= 7; i++) {
+            const inV = getPinV(`IN${i}`, `PIN_${i}`);
+            const outPin = `OUT${i}`;
+            const altPin = `PIN_${17 - i}`;
+            if (inV >= 1.5) {
+              // Open-collector pulls to GND (0.15V) to sink current
+              drivePin(outPin, 0.15, false);
+              drivePin(altPin, 0.15, false);
+            }
           }
         }
       }
     }
-  }
 
-  // Second Pass if any active switch conducted or IC output drove
-  if (activeConductionAdded) {
-    propagateNets(adj, pinStates, warnings);
+    // Propagate net voltages if any active device switched
+    if (activeConductionAdded) {
+      propagateNets(adj, pinStates, warnings);
+    } else {
+      break; // Settled and converged!
+    }
   }
 
   // 5. Update Component Behaviors and Visuals
@@ -1328,13 +1528,20 @@ export function evaluateCircuit(
       const vDiff = Math.abs(v1 - v2);
       updates.voltageDiff = vDiff;
 
+      const cached = capacitorStateCache.get(comp.id);
+      const storedV = cached ? cached.storedVoltage : vDiff;
+      updates.storedVoltage = Number(storedV.toFixed(2));
+      updates.isCharging = vDiff > storedV + 0.1;
+      updates.isDischarging = storedV > 0.1 && vDiff <= storedV + 0.05;
+      updates.chargePercent = Math.min(100, Math.round((storedV / Math.max(5, storedV, vDiff)) * 100));
+
       // Capacitance conversion to Farads
       const cVal = comp.properties?.capacitance ?? 100;
       const unit = comp.properties?.unit || (comp.type === 'capacitor' ? 'µF' : 'nF');
       const multiplier = unit === 'pF' ? 1e-12 : unit === 'nF' ? 1e-9 : unit === 'µF' ? 1e-6 : 1e-3;
       const farads = cVal * multiplier;
-      updates.storedEnergyUj = Math.round(0.5 * farads * vDiff * vDiff * 1e6 * 100) / 100; // microjoules
-      updates.storedChargeUc = Math.round(farads * vDiff * 1e6 * 100) / 100; // microcoulombs
+      updates.storedEnergyUj = Math.round(0.5 * farads * storedV * storedV * 1e6 * 100) / 100; // microjoules
+      updates.storedChargeUc = Math.round(farads * storedV * 1e6 * 100) / 100; // microcoulombs
 
       // Polarized check
       if (isPolarized && v2 - v1 > 0.8) {

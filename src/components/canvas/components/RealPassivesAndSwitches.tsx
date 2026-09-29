@@ -229,22 +229,35 @@ export const RealCapacitor: React.FC<CompProps> = ({ comp, renderPin }) => {
   const unit = props.unit || 'µF';
   const voltageRating = props.voltageRating || '25V';
   const capPins = COMPONENT_CATALOG.find((c) => c.type === 'capacitor')?.pins || [];
+  const storedVoltage = Number(comp.runtimeState?.storedVoltage) || 0;
+  const isDischarging = Boolean(comp.runtimeState?.isDischarging);
+  const isCharging = Boolean(comp.runtimeState?.isCharging);
 
   return (
     <div className="relative w-12 h-18 select-none flex flex-col items-center font-mono">
       {/* Aluminum Canister Body with Dark Blue Sleeve */}
-      <div className="relative w-9 h-12 rounded-t-sm rounded-b-xs bg-gradient-to-r from-[#0f284e] via-[#1d4ed8] to-[#0f284e] border border-blue-900 shadow-xl overflow-hidden flex flex-col justify-between">
+      <div className={`relative w-9 h-12 rounded-t-sm rounded-b-xs bg-gradient-to-r from-[#0f284e] via-[#1d4ed8] to-[#0f284e] border shadow-xl overflow-hidden flex flex-col justify-between transition-all ${
+        storedVoltage > 0.5 ? 'border-emerald-400/80 shadow-[0_0_10px_rgba(16,185,129,0.3)]' : 'border-blue-900'
+      }`}>
         {/* Stamped Metal Top Cap with Pressure Vent Score ("K" Vent) */}
         <div className="w-full h-2.5 bg-gradient-to-b from-slate-200 to-slate-400 border-b border-slate-500 flex items-center justify-center">
           <div className="w-2.5 h-0.5 bg-slate-600 rounded-full" />
         </div>
 
-        {/* Text Rating */}
+        {/* Text Rating & Live Charge Readout */}
         <div className="px-1 text-center my-auto">
-          <div className="text-[6.5px] font-bold text-white leading-tight">
+          <div className="text-[6px] font-bold text-white leading-tight">
             {capacitance}{unit}
           </div>
-          <div className="text-[5px] text-blue-200">{voltageRating} 105°C</div>
+          {storedVoltage > 0.2 ? (
+            <div className={`text-[5.5px] font-black leading-none drop-shadow-[0_0_4px_#34d399] ${
+              isDischarging ? 'text-amber-300 animate-pulse' : 'text-emerald-300'
+            }`}>
+              {storedVoltage.toFixed(1)}V ⚡
+            </div>
+          ) : (
+            <div className="text-[5px] text-blue-200">{voltageRating}</div>
+          )}
         </div>
 
         {/* Distinctive White Negative Stripe with '-' signs along the right side */}
