@@ -1260,6 +1260,61 @@ export const ComponentInspector: React.FC<ComponentInspectorProps> = ({
                 )}
               </div>
             </div>
+
+            {/* Live Charge, Energy & State Metrics */}
+            {(() => {
+              const rs = selectedComponent.runtimeState || {};
+              const vStored = Number(rs.storedVoltage ?? selectedComponent.properties?.storedVoltage) || 0;
+              const isChg = Boolean(rs.isCharging);
+              const isDis = Boolean(rs.isDischarging);
+              const qUc = Number(rs.storedChargeUc) || 0;
+              const qMc = Number(rs.storedChargeMc) || 0;
+              const eMj = Number(rs.storedEnergyMj) || 0;
+              const eUj = Number(rs.storedEnergyUj) || 0;
+
+              return (
+                <div className="mt-2 p-2 rounded bg-slate-950/80 border border-cyan-900/60 font-mono text-[10px] space-y-1.5 shadow-inner">
+                  <div className="flex items-center justify-between text-cyan-400 font-bold border-b border-slate-800 pb-1">
+                    <span>⚡ LIVE CHARGE & ENERGY (चार्ज एवं ऊर्जा)</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                      isChg ? 'bg-emerald-950 text-emerald-300 border border-emerald-600 animate-pulse' :
+                      isDis ? 'bg-amber-950 text-amber-300 border border-amber-600 animate-pulse' :
+                      vStored > 0.2 ? 'bg-cyan-950 text-cyan-300 border border-cyan-700' :
+                      'bg-slate-900 text-slate-500'
+                    }`}>
+                      {isChg ? 'CHARGING ⚡' : isDis ? 'DISCHARGING 🔻' : vStored > 0.2 ? 'CHARGED 🔋' : 'DISCHARGED ⚪'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-0.5">
+                    <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                      <div className="text-[9px] text-slate-400">Stored Charge (Q = C·V):</div>
+                      <div className="text-xs font-bold text-emerald-400">
+                        {qMc >= 0.1 ? `${qMc} mC` : `${qUc} µC`}
+                      </div>
+                      <div className="text-[8px] text-slate-500">
+                        {qMc >= 0.1 ? `(${qUc.toFixed(0)} µC)` : `${(qUc * 1000).toFixed(0)} nC`}
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                      <div className="text-[9px] text-slate-400">Stored Energy (E = ½CV²):</div>
+                      <div className="text-xs font-bold text-amber-400">
+                        {eMj >= 0.1 ? `${eMj} mJ` : `${eUj} µJ`}
+                      </div>
+                      <div className="text-[8px] text-slate-500">
+                        {eMj >= 0.1 ? `(${eUj.toFixed(0)} µJ)` : `${(eUj / 1000).toFixed(2)} mJ`}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[9px] text-slate-400 bg-slate-900/50 px-2 py-1 rounded">
+                    <span>Stored Voltage: <strong className="text-cyan-300">{vStored.toFixed(2)}V</strong></span>
+                    <span>Cap Rating: <strong className="text-slate-200">{selectedComponent.properties?.capacitance ?? 100}{selectedComponent.properties?.unit || (selectedComponent.type === 'capacitor' ? 'µF' : 'nF')}</strong></span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 

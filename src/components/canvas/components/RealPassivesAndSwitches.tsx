@@ -232,11 +232,15 @@ export const RealCapacitor: React.FC<CompProps> = ({ comp, renderPin }) => {
   const storedVoltage = Number(props.storedVoltage ?? comp.runtimeState?.storedVoltage) || 0;
   const isDischarging = Boolean(props.isDischarging ?? comp.runtimeState?.isDischarging);
   const isCharging = Boolean(props.isCharging ?? comp.runtimeState?.isCharging);
+  const storedChargeMc = Number(comp.runtimeState?.storedChargeMc) || 0;
+  const storedChargeUc = Number(comp.runtimeState?.storedChargeUc) || 0;
 
   return (
     <div className="relative w-12 h-18 select-none flex flex-col items-center font-mono">
       {/* Aluminum Canister Body with Dark Blue Sleeve */}
       <div className={`relative w-9 h-12 rounded-t-sm rounded-b-xs bg-gradient-to-r from-[#0f284e] via-[#1d4ed8] to-[#0f284e] border shadow-xl overflow-hidden flex flex-col justify-between transition-all ${
+        isCharging ? 'border-emerald-400 ring-2 ring-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.5)]' :
+        isDischarging ? 'border-amber-400 ring-2 ring-amber-400/50 shadow-[0_0_12px_rgba(245,158,11,0.5)]' :
         storedVoltage > 0.5 ? 'border-emerald-400/80 shadow-[0_0_10px_rgba(16,185,129,0.3)]' : 'border-blue-900'
       }`}>
         {/* Stamped Metal Top Cap with Pressure Vent Score ("K" Vent) */}
@@ -249,11 +253,14 @@ export const RealCapacitor: React.FC<CompProps> = ({ comp, renderPin }) => {
           <div className="text-[6px] font-bold text-white leading-tight">
             {capacitance}{unit}
           </div>
-          {storedVoltage > 0.2 ? (
-            <div className={`text-[5.5px] font-black leading-none drop-shadow-[0_0_4px_#34d399] ${
-              isDischarging ? 'text-amber-300 animate-pulse' : 'text-emerald-300'
+          {storedVoltage > 0.15 ? (
+            <div className={`text-[5px] font-black leading-none drop-shadow-[0_0_4px_#34d399] ${
+              isDischarging ? 'text-amber-300 animate-pulse' : isCharging ? 'text-emerald-300 animate-pulse' : 'text-cyan-300'
             }`}>
-              {storedVoltage.toFixed(1)}V ⚡
+              {storedVoltage.toFixed(1)}V {isDischarging ? '🔻' : isCharging ? '⚡' : '🔋'}
+              <div className="text-[4.5px] font-mono text-emerald-200 mt-0.5">
+                {storedChargeMc >= 0.1 ? `${storedChargeMc}mC` : `${storedChargeUc.toFixed(0)}µC`}
+              </div>
             </div>
           ) : (
             <div className="text-[5px] text-blue-200">{voltageRating}</div>

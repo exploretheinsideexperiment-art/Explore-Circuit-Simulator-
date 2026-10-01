@@ -264,8 +264,8 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   // Auto-Set calibration
   const handleAutoSet = () => {
     const isFg = isCh1DirectFg || isCh1CanvasFg;
-    const targetFreq = isFg ? (functionGenState?.frequency || ch1FrequencyNum) : (ch1FrequencyNum > 0 ? ch1FrequencyNum : 1000);
-    const targetVpp = isFg ? (functionGenState?.amplitude || 5.0) : (ch1RawVoltage > 0 ? ch1RawVoltage * 2 : 3.3);
+    const targetFreq = ch1Resolved.frequency || (isFg ? functionGenState?.frequency : null) || (ch1FrequencyNum > 0 ? ch1FrequencyNum : 1000);
+    const targetVpp = ch1Resolved.amplitude || (isFg ? functionGenState?.amplitude : null) || (ch1RawVoltage > 0 ? ch1RawVoltage * 2 : 5.0);
 
     if (targetFreq > 0) {
       const periodMs = 1000 / targetFreq;
@@ -281,12 +281,13 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
         Math.abs(curr - targetVoltsDiv) < Math.abs(prev - targetVoltsDiv) ? curr : prev
       );
       setCh1VoltsDiv(bestVoltsDiv);
+      setCh2VoltsDiv(bestVoltsDiv);
     }
     setHPosDiv(0);
     setTimeDelay(0);
     setCh1PosDiv(0);
     setCh2PosDiv(0);
-    setTriggerLevel(0);
+    setTriggerLevel(ch1OffsetVal || 0);
     setBandwidthMode('FULL');
   };
 
@@ -352,17 +353,19 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   const ch1Resolved = resolveProbeTargetReading(controlledRedProbe || ch1Pin, pinStates, wires);
   const ch1Key = ch1Pin ? `${ch1Pin.compId}:${ch1Pin.pinId}` : '';
   const ch1State = (ch1Key && pinStates) ? pinStates[ch1Key] : null;
-  let ch1RawVoltage = ch1Resolved.isLive ? ch1Resolved.voltage : (ch1State?.voltage ?? 0);
+  let ch1RawVoltage = ch1Resolved.amplitude !== undefined
+    ? ch1Resolved.amplitude / 2
+    : ch1State?.amplitude !== undefined
+      ? ch1State.amplitude / 2
+      : ch1Resolved.isLive
+        ? ch1Resolved.voltage
+        : (ch1State?.voltage ?? 0);
   let ch1Pwm = ch1Resolved.pwmDuty ?? ch1State?.pwmDuty ?? 0;
   let ch1IsAc = Boolean(ch1Resolved.isAc || ch1State?.isAc);
   let ch1Waveform: WaveformType = (ch1Resolved.waveform as WaveformType) || (ch1State?.waveform as WaveformType) || 'sine';
   let ch1FrequencyNum = ch1Resolved.frequency || ch1State?.frequency || 1000;
-  let ch1OffsetVal = ch1State?.offset ?? 0;
-  let ch1DutyVal = ch1State?.duty ?? 50;
-
-  if (ch1State?.amplitude !== undefined) {
-    ch1RawVoltage = ch1State.amplitude / 2;
-  }
+  let ch1OffsetVal = ch1Resolved.offset ?? ch1State?.offset ?? 0;
+  let ch1DutyVal = ch1Resolved.duty ?? ch1State?.duty ?? 50;
 
   if (isCh1DirectFg || isCh1CanvasFg) {
     ch1IsAc = true;
@@ -388,13 +391,19 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   const ch2Resolved = resolveProbeTargetReading(controlledBlackProbe || ch2Pin, pinStates, wires);
   const ch2Key = ch2Pin ? `${ch2Pin.compId}:${ch2Pin.pinId}` : '';
   const ch2State = (ch2Key && pinStates) ? pinStates[ch2Key] : null;
-  let ch2RawVoltage = ch2Resolved.isLive ? ch2Resolved.voltage : (ch2State?.voltage ?? 0);
+  let ch2RawVoltage = ch2Resolved.amplitude !== undefined
+    ? ch2Resolved.amplitude / 2
+    : ch2State?.amplitude !== undefined
+      ? ch2State.amplitude / 2
+      : ch2Resolved.isLive
+        ? ch2Resolved.voltage
+        : (ch2State?.voltage ?? 0);
   let ch2Pwm = ch2Resolved.pwmDuty ?? ch2State?.pwmDuty ?? 0;
   let ch2IsAc = Boolean(ch2Resolved.isAc || ch2State?.isAc);
   let ch2Waveform: WaveformType = (ch2Resolved.waveform as WaveformType) || (ch2State?.waveform as WaveformType) || 'sine';
   let ch2FrequencyNum = ch2Resolved.frequency || ch2State?.frequency || 1000;
-  let ch2OffsetVal = ch2State?.offset ?? 0;
-  let ch2DutyVal = ch2State?.duty ?? 50;
+  let ch2OffsetVal = ch2Resolved.offset ?? ch2State?.offset ?? 0;
+  let ch2DutyVal = ch2Resolved.duty ?? ch2State?.duty ?? 50;
 
   if (ch2State?.amplitude !== undefined) {
     ch2RawVoltage = ch2State.amplitude / 2;
@@ -486,10 +495,15 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
           if (ch1Waveform === 'sine') {
             waveInstant = vPeak * Math.sin(normPhase * 2 * Math.PI);
           } else if (ch1Waveform === 'square') {
-            const dutyNorm = (ch1DutyVal || 50) / 100;
+            const dutyNorm = Math.max(0.05, Math.min(0.95, (ch1DutyVal || 50) / 100));
             waveInstant = normPhase < dutyNorm ? vPeak : -vPeak;
           } else if (ch1Waveform === 'triangle') {
-            waveInstant = normPhase < 0.5 ? (4 * normPhase - 1) * vPeak : (3 - 4 * normPhase) * vPeak;
+            const dutyNorm = Math.max(0.05, Math.min(0.95, (ch1DutyVal || 50) / 100));
+            if (normPhase < dutyNorm) {
+              waveInstant = -vPeak + (2 * vPeak) * (normPhase / dutyNorm);
+            } else {
+              waveInstant = vPeak - (2 * vPeak) * ((normPhase - dutyNorm) / (1 - dutyNorm));
+            }
           } else if (ch1Waveform === 'sawtooth') {
             waveInstant = (2 * normPhase - 1) * vPeak;
           } else {
@@ -596,10 +610,15 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
           if (ch2Waveform === 'sine') {
             waveInstant = vPeak * Math.sin(normPhase * 2 * Math.PI);
           } else if (ch2Waveform === 'square') {
-            const dutyNorm = (ch2DutyVal || 50) / 100;
+            const dutyNorm = Math.max(0.05, Math.min(0.95, (ch2DutyVal || 50) / 100));
             waveInstant = normPhase < dutyNorm ? vPeak : -vPeak;
           } else if (ch2Waveform === 'triangle') {
-            waveInstant = normPhase < 0.5 ? (4 * normPhase - 1) * vPeak : (3 - 4 * normPhase) * vPeak;
+            const dutyNorm = Math.max(0.05, Math.min(0.95, (ch2DutyVal || 50) / 100));
+            if (normPhase < dutyNorm) {
+              waveInstant = -vPeak + (2 * vPeak) * (normPhase / dutyNorm);
+            } else {
+              waveInstant = vPeak - (2 * vPeak) * ((normPhase - dutyNorm) / (1 - dutyNorm));
+            }
           } else if (ch2Waveform === 'sawtooth') {
             waveInstant = (2 * normPhase - 1) * vPeak;
           } else {

@@ -177,7 +177,7 @@ void loop() {
     const currentFg = functionGenStateRef.current;
     const externalInjections: ExternalSignalInjection[] = [];
 
-    if (currentFg && isSimulating) {
+    if (currentFg) {
       const vPeak = currentFg.amplitude / 2;
       const vRms = currentFg.waveform === 'sine' ? vPeak * 0.7071 : vPeak;
 
@@ -185,14 +185,14 @@ void loop() {
       externalInjections.push({
         compId: '__func_gen__',
         pinId: 'OUT',
-        voltage: currentFg.isOn ? Math.max(0.1, Number(vRms.toFixed(2))) : 0,
-        isAc: true,
+        voltage: currentFg.isOn ? Math.max(0.05, Number(vPeak.toFixed(2))) : 0,
+        isAc: currentFg.isOn,
         frequency: currentFg.frequency,
         waveform: currentFg.waveform,
         amplitude: currentFg.amplitude,
         offset: currentFg.offset,
         duty: currentFg.duty,
-        isDriven: true,
+        isDriven: currentFg.isOn,
         driverType: 'power',
       });
 
@@ -231,7 +231,7 @@ void loop() {
         externalInjections.push({
           compId: redCompId,
           pinId: redPinId,
-          voltage: Math.max(0.1, Number(vRms.toFixed(2))) || 5.0,
+          voltage: Math.max(0.05, Number(vPeak.toFixed(2))) || 2.5,
           isAc: true,
           frequency: currentFg.frequency,
           waveform: currentFg.waveform,

@@ -96,6 +96,9 @@ export interface ProbeReadingResult {
   isLive: boolean;
   frequency?: number;
   waveform?: 'sine' | 'square' | 'triangle' | 'sawtooth';
+  amplitude?: number;
+  offset?: number;
+  duty?: number;
   pwmDuty?: number;
   label: string;
 }
@@ -124,6 +127,9 @@ export function resolveProbeTargetReading(
         isLive: true,
         frequency: direct.frequency,
         waveform: direct.waveform,
+        amplitude: direct.amplitude,
+        offset: direct.offset,
+        duty: direct.duty,
         pwmDuty: direct.pwmDuty,
         label: target.label || key,
       };
@@ -142,6 +148,9 @@ export function resolveProbeTargetReading(
           isLive: true,
           frequency: stateTo.frequency,
           waveform: stateTo.waveform,
+          amplitude: stateTo.amplitude,
+          offset: stateTo.offset,
+          duty: stateTo.duty,
           pwmDuty: stateTo.pwmDuty,
           label: target.label || `Wire ${wire.id}`,
         };
@@ -154,6 +163,9 @@ export function resolveProbeTargetReading(
           isLive: true,
           frequency: stateFrom.frequency,
           waveform: stateFrom.waveform,
+          amplitude: stateFrom.amplitude,
+          offset: stateFrom.offset,
+          duty: stateFrom.duty,
           pwmDuty: stateFrom.pwmDuty,
           label: target.label || `Wire ${wire.id}`,
         };
@@ -176,6 +188,9 @@ export function resolveProbeTargetReading(
             isLive: true,
             frequency: s2.frequency,
             waveform: s2.waveform,
+            amplitude: s2.amplitude,
+            offset: s2.offset,
+            duty: s2.duty,
             pwmDuty: s2.pwmDuty,
             label: target.label || startKey,
           };
@@ -189,6 +204,9 @@ export function resolveProbeTargetReading(
             isLive: true,
             frequency: s1.frequency,
             waveform: s1.waveform,
+            amplitude: s1.amplitude,
+            offset: s1.offset,
+            duty: s1.duty,
             pwmDuty: s1.pwmDuty,
             label: target.label || startKey,
           };

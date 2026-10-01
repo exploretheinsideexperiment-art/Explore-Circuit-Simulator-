@@ -284,6 +284,9 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     index: number;
   } | null>(null);
 
+  // Active draft waypoint drag for modifying in-progress wire dots
+  const [activeDraftWaypointDrag, setActiveDraftWaypointDrag] = useState<number | null>(null);
+
   // Timestamps for desktop double-click and mobile double-tap detection
   const lastCompClickRef = useRef<{ compId: string; time: number } | null>(null);
   const lastCompTapRef = useRef<{ compId: string; time: number } | null>(null);
@@ -488,6 +491,21 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       return;
     }
 
+    // If dragging a draft waypoint for wire currently being routed:
+    if (activeDraftWaypointDrag !== null) {
+      setWireWaypoints((prev) => {
+        const next = [...prev];
+        if (next[activeDraftWaypointDrag]) {
+          next[activeDraftWaypointDrag] = {
+            x: Math.round(coords.x),
+            y: Math.round(coords.y),
+          };
+        }
+        return next;
+      });
+      return;
+    }
+
     if (isPanning) {
       setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
     }
@@ -499,6 +517,11 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
     if (activeWaypointDrag) {
       setActiveWaypointDrag(null);
+      return;
+    }
+
+    if (activeDraftWaypointDrag !== null) {
+      setActiveDraftWaypointDrag(null);
       return;
     }
 
@@ -585,6 +608,32 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       const coords = getCanvasCoords(touch.clientX, touch.clientY);
       setCursorPos(coords);
 
+      if (activeWaypointDrag) {
+        const targetWire = wires.find((w) => w.id === activeWaypointDrag.wireId);
+        if (targetWire && targetWire.waypoints) {
+          const nextWps = [...targetWire.waypoints];
+          nextWps[activeWaypointDrag.index] = {
+            x: Math.round(coords.x),
+            y: Math.round(coords.y),
+          };
+          onUpdateWire?.(targetWire.id, { waypoints: nextWps });
+        }
+        return;
+      }
+      if (activeDraftWaypointDrag !== null) {
+        setWireWaypoints((prev) => {
+          const next = [...prev];
+          if (next[activeDraftWaypointDrag]) {
+            next[activeDraftWaypointDrag] = {
+              x: Math.round(coords.x),
+              y: Math.round(coords.y),
+            };
+          }
+          return next;
+        });
+        return;
+      }
+
       if (isPanning) {
         setPan({ x: touch.clientX - panStart.x, y: touch.clientY - panStart.y });
       } else if (wireStart) {
@@ -605,6 +654,8 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     setIsPanning(false);
+    if (activeWaypointDrag) setActiveWaypointDrag(null);
+    if (activeDraftWaypointDrag !== null) setActiveDraftWaypointDrag(null);
 
     if (wireStart && e.changedTouches?.[0]) {
       const touch = e.changedTouches[0];
@@ -1644,6 +1695,16 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                   onSelectComponent(null);
                 }
               }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                const coords = getCanvasCoords(e.clientX, e.clientY);
+                const tapPt = { x: Math.round(coords.x), y: Math.round(coords.y) };
+                const currentWps = wire.waypoints || [];
+                onUpdateWire?.(wire.id, { waypoints: [...currentWps, tapPt] });
+                onSelectWire(wire.id);
+                setConnectionToast('⚡ Added new bend dot to wire! Drag dot to route and avoid overlapping.');
+                setTimeout(() => setConnectionToast(null), 3000);
+              }}
             >
               {/* Click target hit area */}
               <path
@@ -1699,17 +1760,91 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                 strokeWidth={1.2}
               />
               {/* Solder junction eyelets for waypoints / T-junctions */}
-              {(wire.waypoints || []).map((wp, i) => (
-                <circle
-                  key={`wp-solder-${wire.id}-${i}`}
-                  cx={wp.x}
-                  cy={wp.y}
-                  r={3.8}
-                  fill={isSelected ? '#38bdf8' : wire.color || '#06b6d4'}
-                  stroke="#ffffff"
-                  strokeWidth={1.5}
-                  className="pointer-events-none shadow-sm drop-shadow"
-                />
+              {(wire.waypoints || []).map((wp, wpIdx) => (
+                <g key={`wp-dot-${wire.id}-${wpIdx}`} className="pointer-events-auto group">
+                  {/* Invisible wide hit area for easy drag & drop */}
+                  <circle
+                    cx={wp.x}
+                    cy={wp.y}
+                    r={12}
+                    fill="transparent"
+                    className="cursor-move"
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      if (wireStart) {
+                        // In wiring mode: connect into this dot immediately as a T-junction tap!
+                        const targetCompId =
+                          wire.fromCompId === wireStart.compId && wire.fromPinId === wireStart.pinId
+                            ? wire.toCompId
+                            : wire.fromCompId;
+                        const targetPinId =
+                          wire.fromCompId === wireStart.compId && wire.fromPinId === wireStart.pinId
+                            ? wire.toPinId
+                            : wire.fromPinId;
+                        const finalWaypoints = [...wireWaypoints, { x: wp.x, y: wp.y }];
+                        onAddWire(wireStart.compId, wireStart.pinId, targetCompId, targetPinId, wireColor, finalWaypoints);
+                        try {
+                          soundEngine.playRelayClick(true);
+                        } catch (_) {}
+                        setConnectionToast('⚡ Wire connected into junction dot! (T-Tap)');
+                        setTimeout(() => setConnectionToast(null), 3500);
+
+                        setWireStart(null);
+                        setWireWaypoints([]);
+                        setIsDraggingWire(false);
+                        setHoveredPin(null);
+                        setHoveredWireTap(null);
+                        return;
+                      }
+
+                      // Normal drag: move this waypoint dot to prevent wire overlap!
+                      setActiveWaypointDrag({ wireId: wire.id, index: wpIdx });
+                      onSelectWire(wire.id);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      // Double-click to start a new wire connection branching FROM this dot!
+                      setWireStart({ compId: wire.fromCompId, pinId: wire.fromPinId, x: wp.x, y: wp.y });
+                      setWireWaypoints([{ x: wp.x, y: wp.y }]);
+                      setIsDraggingWire(true);
+                      if (wire.color) onWireColorChange?.(wire.color);
+                      setConnectionToast(`⚡ Started new wire branching from junction dot (${wire.fromPinId})!`);
+                      setTimeout(() => setConnectionToast(null), 3000);
+                    }}
+                  />
+                  {/* Visual Solder / Junction Dot */}
+                  <circle
+                    cx={wp.x}
+                    cy={wp.y}
+                    r={isSelected ? 6 : 4.5}
+                    fill={isSelected ? '#38bdf8' : wire.color || '#06b6d4'}
+                    stroke="#ffffff"
+                    strokeWidth={isSelected ? 2 : 1.5}
+                    className="cursor-move group-hover:scale-150 transition-transform shadow-md drop-shadow"
+                  >
+                    <title>{`Junction Dot #${wpIdx + 1} - Drag to reposition and avoid overlap | Double-click to branch wire from here`}</title>
+                  </circle>
+                  <circle
+                    cx={wp.x}
+                    cy={wp.y}
+                    r={1.8}
+                    fill="#ffffff"
+                    className="pointer-events-none"
+                  />
+                  {isSelected && (
+                    <text
+                      x={wp.x}
+                      y={wp.y - 10}
+                      fill="#38bdf8"
+                      fontSize="9"
+                      fontFamily="monospace"
+                      textAnchor="middle"
+                      className="select-none pointer-events-none font-bold"
+                    >
+                      #{wpIdx + 1}
+                    </text>
+                  )}
+                </g>
               ))}
               {/* Live Signal Animation during active simulation */}
               {isRunning && isHigh && (
@@ -1723,44 +1858,6 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                   className="animate-wire-flow opacity-80"
                 />
               )}
-
-              {/* Waypoint draggable handles for selected wire */}
-              {isSelected &&
-                (wire.waypoints || []).map((wp, wpIdx) => (
-                  <g key={`wp-${wire.id}-${wpIdx}`} className="pointer-events-auto">
-                    <circle
-                      cx={wp.x}
-                      cy={wp.y}
-                      r={6.5}
-                      fill={wire.color || '#06b6d4'}
-                      stroke="#ffffff"
-                      strokeWidth={2}
-                      className="cursor-move hover:scale-150 transition-transform shadow-lg drop-shadow"
-                      onMouseDown={(e) => {
-                        e.stopPropagation();
-                        setActiveWaypointDrag({ wireId: wire.id, index: wpIdx });
-                      }}
-                      onDoubleClick={(e) => {
-                        e.stopPropagation();
-                        const updated = (wire.waypoints || []).filter((_, i) => i !== wpIdx);
-                        onUpdateWire?.(wire.id, { waypoints: updated.length > 0 ? updated : undefined });
-                      }}
-                    >
-                      <title>{`Waypoint #${wpIdx + 1} - Drag to reposition | Double-click to delete`}</title>
-                    </circle>
-                    <text
-                      x={wp.x}
-                      y={wp.y - 10}
-                      fill="#38bdf8"
-                      fontSize="9"
-                      fontFamily="monospace"
-                      textAnchor="middle"
-                      className="select-none pointer-events-none"
-                    >
-                      #{wpIdx + 1}
-                    </text>
-                  </g>
-                ))}
             </g>
           );
         })}
@@ -1832,7 +1929,18 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
               {/* Waypoint markers dropped on blank canvas */}
               {wireWaypoints.map((wp, idx) => (
-                <g key={`draft-wp-${idx}`} className="pointer-events-auto">
+                <g
+                  key={`draft-wp-${idx}`}
+                  className="pointer-events-auto cursor-move group"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setActiveDraftWaypointDrag(idx);
+                  }}
+                  onTouchStart={(e) => {
+                    e.stopPropagation();
+                    setActiveDraftWaypointDrag(idx);
+                  }}
+                >
                   <circle
                     cx={wp.x}
                     cy={wp.y}
@@ -1840,22 +1948,22 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                     fill="none"
                     stroke={wireColor}
                     strokeWidth={2}
-                    className="animate-ping opacity-40"
+                    className="animate-ping opacity-40 pointer-events-none"
                   />
                   <circle
                     cx={wp.x}
                     cy={wp.y}
-                    r={5.5}
+                    r={6.5}
                     fill={wireColor}
                     stroke="#ffffff"
                     strokeWidth={2}
-                    className="cursor-pointer hover:scale-125 transition-transform"
-                    onClick={(e) => {
+                    className="cursor-move group-hover:scale-125 transition-transform shadow-lg drop-shadow"
+                    onDoubleClick={(e) => {
                       e.stopPropagation();
                       setWireWaypoints((prev) => prev.slice(0, idx));
                     }}
                   >
-                    <title>{`Waypoint #${idx + 1} - Click to backtrack`}</title>
+                    <title>{`Draft Dot #${idx + 1} - Drag to move dot and avoid wire overlap | Double-click to backtrack`}</title>
                   </circle>
                   <text
                     x={wp.x}
@@ -1864,7 +1972,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                     fontSize="9"
                     fontFamily="monospace"
                     textAnchor="middle"
-                    className="select-none pointer-events-none"
+                    className="select-none pointer-events-none font-bold"
                   >
                     #{idx + 1}
                   </text>

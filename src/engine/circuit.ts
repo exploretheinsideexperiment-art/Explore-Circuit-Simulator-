@@ -7,6 +7,43 @@ import { SUPPORTED_BOARDS } from './mcu/boards';
 import { soundEngine } from './audio';
 import { findIcDefinition, TRANSISTOR_MODELS, DIODE_MODELS } from './peripherals/icLibrary';
 
+// Helper to parse capacitance rating into Farads and microfarads
+function getCapacitorSpecs(comp: CircuitComponent): { farads: number; capUf: number; label: string } {
+  const raw = Number(comp.properties?.capacitance) || (comp.type === 'capacitor' ? 100 : (comp.type === 'capacitor-ceramic' ? 100 : 100));
+  const rawUnit = String(comp.properties?.unit || (comp.type === 'capacitor' ? 'µF' : 'nF')).trim();
+  const u = rawUnit.toLowerCase();
+  let mult = 1e-6; // default µF
+  if (u === 'pf') mult = 1e-12;
+  else if (u === 'nf') mult = 1e-9;
+  else if (u === 'µf' || u === 'uf') mult = 1e-6;
+  else if (u === 'mf') mult = 1e-3;
+  else if (u === 'f') mult = 1;
+  const farads = Math.max(1e-13, raw * mult);
+  const capUf = farads * 1e6;
+  return { farads, capUf, label: `${raw}${rawUnit}` };
+}
+
+// Helper to determine branch resistance connected directly to component pins
+function getConnectedBranchResistance(adjKeys: string[], components: CircuitComponent[]): number {
+  let resistance = 0;
+  for (const k of adjKeys) {
+    const colonIdx = k.indexOf(':');
+    if (colonIdx > 0) {
+      const cId = k.substring(0, colonIdx);
+      const c = components.find((item) => item.id === cId);
+      if (c && c.type === 'resistor') {
+        const val = Number(c.properties?.resistance ?? c.properties?.value ?? 220);
+        const unit = String(c.properties?.unit || 'Ω').trim();
+        let mult = 1;
+        if (unit.startsWith('k') || unit.startsWith('K')) mult = 1000;
+        else if (unit.startsWith('M')) mult = 1000000;
+        resistance += val * mult;
+      }
+    }
+  }
+  return resistance;
+}
+
 // Module-level transient state caches for dynamic analog components & ICs
 const capacitorStateCache = new Map<string, { storedVoltage: number; lastTime: number }>();
 const icTimingStateCache = new Map<string, { currentStep: number; lastClk: number; outVoltage: number; lastToggleTime: number; phase: boolean }>();
@@ -613,16 +650,22 @@ export function evaluateCircuit(
         const dt = Math.min(0.2, Math.max(0.005, (now - cached.lastTime) / 1000));
         cached.lastTime = now;
 
+        const { farads, capUf } = getCapacitorSpecs(comp);
+        const connectedR = getConnectedBranchResistance([...(adj[posKey] || []), ...(adj[negKey] || [])], components);
+
         const vPos = pPos?.voltage || 0;
         const vNeg = pNeg?.voltage || 0;
         const isExtPos = Boolean(pPos?.isDriven && pPos.driverType !== 'passive' && pPos.driverType !== 'ground');
         const isExtNeg = Boolean(pNeg?.isDriven || pNeg?.signalLevel === 'POWER_GND' || pNeg?.driverType === 'ground');
         const vApplied = Math.max(0, vPos - vNeg);
 
-        if (isExtPos && isExtNeg && vApplied > 0.2) {
-          // Actively charging from external power source
-          cached.storedVoltage = Math.min(vApplied, cached.storedVoltage + (vApplied - cached.storedVoltage) * Math.min(1.0, dt / 0.15));
-        } else if (cached.storedVoltage > 0.1 && (!isExtPos || vApplied < cached.storedVoltage - 0.2)) {
+        if (isExtPos && isExtNeg && vApplied > 0.15) {
+          // Actively charging from external power source with real RC time constant tau = R * C
+          // If in series with a resistor (e.g. 1kΩ), R is connectedR; otherwise internal source ESR ≈ 2.5Ω
+          const rCharge = Math.max(2.5, connectedR > 0 ? connectedR : 2.5);
+          const tauCharge = Math.max(0.02, Math.min(30.0, rCharge * farads * 0.8));
+          cached.storedVoltage = Math.min(vApplied, vApplied - (vApplied - cached.storedVoltage) * Math.exp(-dt / tauCharge));
+        } else if (cached.storedVoltage > 0.08 && (!isExtPos || vApplied < cached.storedVoltage - 0.15)) {
           // Only discharge if connected into an actual circuit with closed path
           const hasConnectedCircuit = Boolean((adj[posKey] && adj[posKey].length > 0) && (adj[negKey] && adj[negKey].length > 0));
           if (hasConnectedCircuit) {
@@ -631,7 +674,7 @@ export function evaluateCircuit(
               pinStates[posKey].voltage = Number(cached.storedVoltage.toFixed(2));
               pinStates[posKey].isDriven = true;
               pinStates[posKey].driverType = 'power';
-              pinStates[posKey].signalLevel = 'POWER_VCC';
+              pinStates[posKey].signalLevel = cached.storedVoltage > 1.2 ? 'POWER_VCC' : 'LOW';
             }
             if (pinStates[negKey] && !pinStates[negKey].isDriven) {
               pinStates[negKey].voltage = 0;
@@ -641,11 +684,13 @@ export function evaluateCircuit(
             }
             activeConductionAdded = true;
 
-            // Realistic discharge decay into connected load
-            const capVal = Math.max(1, Number(comp.properties?.capacitance) || (comp.type === 'capacitor' ? 100 : 1));
-            const tau = Math.max(0.8, Math.min(12.0, (capVal / 100) * 3.0));
-            cached.storedVoltage = Math.max(0, cached.storedVoltage * Math.exp(-dt / tau));
-            if (cached.storedVoltage < 0.05) cached.storedVoltage = 0;
+            // Realistic discharge decay into connected load: tau = R_load * C
+            // Load resistance is either explicit resistor (e.g. 220Ω, 1kΩ) or standard load path (≈ 250Ω)
+            const rLoad = Math.max(50, connectedR > 0 ? connectedR : 250);
+            // Proportional discharge time: a 10,000µF cap powers an LED for 15s+, a 1000µF for 3-4s, a 100µF for 0.5s, 100nF discharges immediately
+            const tauDischarge = Math.max(0.03, Math.min(60.0, rLoad * (capUf * 1e-6) * 1.5));
+            cached.storedVoltage = Math.max(0, cached.storedVoltage * Math.exp(-dt / tauDischarge));
+            if (cached.storedVoltage < 0.04) cached.storedVoltage = 0;
           }
         }
 
@@ -1666,18 +1711,23 @@ export function evaluateCircuit(
 
       const cached = capacitorStateCache.get(comp.id);
       const storedV = cached ? cached.storedVoltage : 0;
+      const { farads, capUf, label: capLabel } = getCapacitorSpecs(comp);
+      const storedChargeC = farads * storedV;
+      const storedEnergyJ = 0.5 * farads * storedV * storedV;
+
       updates.storedVoltage = Number(storedV.toFixed(2));
-      updates.isCharging = vDiff > storedV + 0.1;
+      updates.isCharging = vDiff > storedV + 0.1 && (v1 > 0.1 || v2 > 0.1);
       updates.isDischarging = storedV > 0.1 && vDiff <= storedV + 0.05;
       updates.chargePercent = Math.min(100, Math.round((storedV / Math.max(5, storedV, vDiff)) * 100));
-
-      // Capacitance conversion to Farads
-      const cVal = comp.properties?.capacitance ?? 100;
-      const unit = comp.properties?.unit || (comp.type === 'capacitor' ? 'µF' : 'nF');
-      const multiplier = unit === 'pF' ? 1e-12 : unit === 'nF' ? 1e-9 : unit === 'µF' ? 1e-6 : 1e-3;
-      const farads = cVal * multiplier;
-      updates.storedEnergyUj = Math.round(0.5 * farads * storedV * storedV * 1e6 * 100) / 100; // microjoules
-      updates.storedChargeUc = Math.round(farads * storedV * 1e6 * 100) / 100; // microcoulombs
+      updates.storedEnergyUj = Number((storedEnergyJ * 1e6).toFixed(2)); // microjoules
+      updates.storedEnergyMj = Number((storedEnergyJ * 1e3).toFixed(3)); // millijoules
+      updates.storedChargeUc = Number((storedChargeC * 1e6).toFixed(2)); // microcoulombs
+      updates.storedChargeMc = Number((storedChargeC * 1e3).toFixed(3)); // millicoulombs
+      updates.chargeCoulombs = storedChargeC;
+      updates.energyJoules = storedEnergyJ;
+      updates.capacitanceFarads = farads;
+      updates.capacitanceUf = capUf;
+      updates.capacitanceLabel = capLabel;
 
       // Polarized check
       if (isPolarized && v2 - v1 > 0.8) {
