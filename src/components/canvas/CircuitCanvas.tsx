@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { 
   CircuitComponent, Wire, ViewMode, PinDef, SignalLevel, LiveWiringStatus 
 } from '../../types';
-import { COMPONENT_CATALOG, getComponentPins, getComponentDimensions } from '../../engine/peripherals/definitions';
+import { COMPONENT_CATALOG, getComponentPins, getComponentDimensions, findPinDef } from '../../engine/peripherals/definitions';
 import { soundEngine } from '../../engine/audio';
 import { SUPPORTED_BOARDS } from '../../engine/mcu/boards';
 import { ZoomIn, ZoomOut, Maximize2, Grid, Trash2, Plus, FolderOpen, Cpu, X, Cable, RotateCw, Play, Pause, Square } from 'lucide-react';
@@ -29,7 +29,9 @@ import {
   RealPushButton, 
   RealPushButton2Pole,
   RealPushButtonDpdt,
-  RealToggleSwitch 
+  RealToggleSwitch,
+  Real9vBattery,
+  RealThermistor
 } from './components/RealPassivesAndSwitches';
 import { 
   RealUltrasonicSensor, 
@@ -65,6 +67,7 @@ import {
   RealPhotodiode,
   RealLaserDiode
 } from './components/RealSemiconductors';
+import { SchematicSymbol } from '../schematic/SchematicSymbols';
 
 interface CircuitCanvasProps {
   components: CircuitComponent[];
@@ -75,7 +78,7 @@ interface CircuitCanvasProps {
   onDoubleClickComponent?: (id: string) => void;
   onSelectWire: (id: string | null) => void;
   onMoveComponent: (id: string, x: number, y: number) => void;
-  onAddWire: (fromCompId: string, fromPinId: string, toCompId: string, toPinId: string, color: string, waypoints?: { x: number; y: number }[]) => void;
+  onAddWire: (fromCompId: string, fromPinId: string, toCompId: string, toPinId: string, color: string, waypoints?: { x: number; y: number }[], routingType?: 'orthogonal' | 'curved') => void;
   onUpdateWire?: (wireId: string, updates: Partial<Wire>) => void;
   onDeleteWire: (wireId: string) => void;
   onDeleteComponent: (compId: string) => void;
@@ -222,6 +225,10 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   const [internalShowGrid, setInternalShowGrid] = useState(true);
   const showGrid = externalShowGrid !== undefined ? externalShowGrid : internalShowGrid;
 
+  // Simple Wire (Auto-Adjustable 90° Orthogonal) vs Flexible Jumper wire mode
+  const [wireRoutingMode, setWireRoutingMode] = useState<'orthogonal' | 'curved'>('orthogonal');
+  const currentRoutingType: 'orthogonal' | 'curved' = (viewMode === 'schematic' || wireRoutingMode === 'orthogonal') ? 'orthogonal' : 'curved';
+
   // Component Dragging State
   const [activeDrag, setActiveDrag] = useState<{
     id: string;
@@ -292,19 +299,99 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   const lastCompTapRef = useRef<{ compId: string; time: number } | null>(null);
   const wireStartTimeRef = useRef<number>(0);
 
-  // Pin Absolute Positions Calculation
+  // Pin Absolute Positions Calculation (Dynamically adjusts between Real & EDA Schematic Symbol modes)
   const getPinAbsolutePos = useCallback((comp: CircuitComponent, pin: PinDef) => {
+    const isSymbol = comp.renderMode === 'symbol' || (comp.renderMode !== 'real' && viewMode === 'schematic');
     const rad = (comp.rotation * Math.PI) / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
 
-    const { width: compW, height: compH } = getComponentDimensions(comp);
+    const compW = isSymbol ? (
+      comp.type === 'resistor' ? 140 :
+      comp.type.includes('ldr') ? 140 :
+      comp.type.includes('thermistor') ? 140 :
+      comp.type.includes('capacitor') ? 130 :
+      comp.type === 'inductor' ? 140 :
+      comp.type.includes('switch') || comp.type.includes('button') ? 130 :
+      comp.type === 'potentiometer' ? 140 :
+      comp.type.includes('diode') || comp.type.includes('led') ? 130 :
+      comp.type.includes('transistor') || comp.type.includes('mosfet') ? 110 :
+      comp.type.includes('opamp') ? 160 :
+      comp.type.startsWith('mcu-') ? 280 :
+      getComponentDimensions(comp).width
+    ) : getComponentDimensions(comp).width;
+
+    const compH = isSymbol ? (
+      comp.type === 'resistor' ? 50 :
+      comp.type.includes('ldr') ? 70 :
+      comp.type.includes('thermistor') ? 65 :
+      comp.type.includes('capacitor') ? 60 :
+      comp.type === 'inductor' ? 55 :
+      comp.type.includes('switch') || comp.type.includes('button') ? 60 :
+      comp.type === 'potentiometer' ? 75 :
+      comp.type.includes('diode') || comp.type.includes('led') ? 60 :
+      comp.type.includes('transistor') || comp.type.includes('mosfet') ? 100 :
+      comp.type.includes('opamp') ? 120 :
+      comp.type.startsWith('mcu-') ? 230 :
+      getComponentDimensions(comp).height
+    ) : getComponentDimensions(comp).height;
+
+    // Pin relative offset
+    let px = pin.x;
+    let py = pin.y;
+
+    if (isSymbol) {
+      const pId = pin.id.toUpperCase();
+      if (comp.type === 'resistor') {
+        if (pId === 'PIN1' || pId === 'PIN_1' || pId === '1') { px = 15; py = 25; }
+        else if (pId === 'PIN2' || pId === 'PIN_2' || pId === '2') { px = 125; py = 25; }
+      } else if (comp.type.includes('ldr')) {
+        if (pId === 'PIN1' || pId === '1') { px = 15; py = 35; }
+        else if (pId === 'PIN2' || pId === '2') { px = 125; py = 35; }
+      } else if (comp.type.includes('thermistor')) {
+        if (pId === 'PIN1' || pId === '1') { px = 15; py = 32; }
+        else if (pId === 'PIN2' || pId === '2') { px = 125; py = 32; }
+      } else if (comp.type.includes('capacitor')) {
+        if (pId === 'POS' || pId === 'PIN1' || pId === '+') { px = 15; py = 30; }
+        else if (pId === 'NEG' || pId === 'PIN2' || pId === '-') { px = 115; py = 30; }
+      } else if (comp.type === 'inductor') {
+        if (pId === 'PIN1' || pId === '1') { px = 15; py = 28; }
+        else if (pId === 'PIN2' || pId === '2') { px = 125; py = 28; }
+      } else if (comp.type.includes('switch') || comp.type.includes('button')) {
+        if (pId === 'PIN1' || pId === '1' || pId === 'COM') { px = 15; py = 30; }
+        else if (pId === 'PIN2' || pId === '2' || pId === 'NO') { px = 115; py = 30; }
+      } else if (comp.type === 'potentiometer') {
+        if (pId === 'PIN1' || pId === '1') { px = 15; py = 45; }
+        else if (pId === 'PIN2' || pId === '2') { px = 125; py = 45; }
+        else if (pId === 'WIPER' || pId === 'W') { px = 70; py = 9; }
+      } else if (comp.type.includes('diode') || comp.type.includes('led')) {
+        if (pId === 'ANODE' || pId === 'A' || pId === 'POS' || pId === '+') { px = 15; py = 30; }
+        else if (pId === 'CATHODE' || pId === 'K' || pId === 'NEG' || pId === '-') { px = 115; py = 30; }
+      } else if (comp.type.includes('transistor') || comp.type.includes('mosfet')) {
+        if (pId === 'BASE' || pId === 'GATE' || pId === 'B' || pId === 'G') { px = 15; py = 50; }
+        else if (pId === 'COLLECTOR' || pId === 'DRAIN' || pId === 'C' || pId === 'D') { px = 80; py = 15; }
+        else if (pId === 'EMITTER' || pId === 'SOURCE' || pId === 'E' || pId === 'S') { px = 80; py = 85; }
+      } else if (comp.type.startsWith('mcu-')) {
+        if (['5V', 'VCC'].includes(pId)) { px = 8; py = 46; }
+        else if (['3V3', '3.3V'].includes(pId)) { px = 8; py = 76; }
+        else if (pId.includes('GND')) { px = 8; py = 106; }
+        else if (pId === 'A0') { px = 8; py = 136; }
+        else if (pId === 'A1') { px = 8; py = 166; }
+        else if (pId === 'VIN') { px = 8; py = 196; }
+        else if (pId === '2' || pId === 'D2') { px = 272; py = 46; }
+        else if (pId === '3' || pId === 'D3' || pId === '4' || pId === 'D4') { px = 272; py = 76; }
+        else if (pId === '5' || pId === 'D5') { px = 272; py = 106; }
+        else if (pId === '18' || pId === 'D18') { px = 272; py = 136; }
+        else if (pId === '13' || pId === 'D13') { px = 272; py = 166; }
+        else if (pId === 'SDA' || pId === '21') { px = 272; py = 196; }
+      }
+    }
 
     const cx = compW / 2;
     const cy = compH / 2;
 
-    const dx = pin.x - cx;
-    const dy = pin.y - cy;
+    const dx = px - cx;
+    const dy = py - cy;
 
     const rotatedX = dx * cos - dy * sin + cx;
     const rotatedY = dx * sin + dy * cos + cy;
@@ -313,7 +400,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       x: comp.x + rotatedX,
       y: comp.y + rotatedY,
     };
-  }, []);
+  }, [viewMode]);
 
   // Proximity Terminal Auto-Connect State
   // When a component's terminal is held near another terminal for ~800ms, they auto-connect!
@@ -442,8 +529,41 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     // If wiring is active:
     if (wireStart) {
       if (e.button === 0) {
-        // Left click on blank canvas: attach a waypoint anchor right here!
         const coords = getCanvasCoords(e.clientX, e.clientY);
+        // Check if user clicked on or near ANY terminal pin (within 36px snap):
+        let nearestPin: { compId: string; pinId: string; dist: number } | null = null;
+        for (const c of components) {
+          const pins = getComponentPins(c);
+          for (const p of pins) {
+            if (c.id === wireStart.compId && p.id === wireStart.pinId) continue;
+            const pos = getPinAbsolutePos(c, p);
+            const d = Math.hypot(pos.x - coords.x, pos.y - coords.y);
+            if (d <= 36 && (!nearestPin || d < nearestPin.dist)) {
+              nearestPin = { compId: c.id, pinId: p.id, dist: d };
+            }
+          }
+        }
+
+        if (nearestPin) {
+          onAddWire(wireStart.compId, wireStart.pinId, nearestPin.compId, nearestPin.pinId, wireColor, wireWaypoints, currentRoutingType);
+          try {
+            soundEngine.playRelayClick(true);
+          } catch (_) {}
+          const targetComp = components.find((c) => c.id === nearestPin!.compId);
+          const targetName = targetComp?.properties?.label || targetComp?.name || targetComp?.type;
+          setConnectionToast(`⚡ Wire connected from ${wireStart.pinId} to ${targetName} (${nearestPin.pinId})!`);
+          setTimeout(() => setConnectionToast(null), 3500);
+
+          lastWireConnectTimeRef.current = Date.now();
+          wireStartRef.current = null;
+          setWireStart(null);
+          setWireWaypoints([]);
+          setIsDraggingWire(false);
+          setHoveredPin(null);
+          return;
+        }
+
+        // Left click on blank canvas: attach a waypoint anchor right here!
         const pt = { x: Math.round(coords.x), y: Math.round(coords.y) };
         setWireWaypoints((prev) => [...prev, pt]);
         try {
@@ -455,6 +575,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
         if (wireWaypoints.length > 0) {
           setWireWaypoints((prev) => prev.slice(0, -1));
         } else {
+          wireStartRef.current = null;
           setWireStart(null);
           setWireWaypoints([]);
           setIsDraggingWire(false);
@@ -477,11 +598,41 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     const coords = getCanvasCoords(e.clientX, e.clientY);
     setCursorPos(coords);
 
+    // If routing a wire: Magnetic terminal snap within 36px
+    if (wireStart) {
+      let nearest: { compId: string; pinId: string; dist: number } | null = null;
+      for (const c of components) {
+        const pins = getComponentPins(c);
+        for (const p of pins) {
+          if (c.id === wireStart.compId && p.id === wireStart.pinId) continue;
+          const pos = getPinAbsolutePos(c, p);
+          const d = Math.hypot(pos.x - coords.x, pos.y - coords.y);
+          if (d <= 36 && (!nearest || d < nearest.dist)) {
+            nearest = { compId: c.id, pinId: p.id, dist: d };
+          }
+        }
+      }
+      if (nearest) {
+        setHoveredPin({ compId: nearest.compId, pinId: nearest.pinId });
+      } else if (hoveredPin) {
+        const currComp = components.find((c) => c.id === hoveredPin.compId);
+        const currDef = currComp ? findPinDef(getComponentPins(currComp), hoveredPin.pinId) : null;
+        if (currDef && currComp) {
+          const currPos = getPinAbsolutePos(currComp, currDef);
+          if (Math.hypot(currPos.x - coords.x, currPos.y - coords.y) > 44) {
+            setHoveredPin(null);
+          }
+        } else {
+          setHoveredPin(null);
+        }
+      }
+    }
+
     // If dragging an existing wire waypoint:
     if (activeWaypointDrag) {
       const targetWire = wires.find((w) => w.id === activeWaypointDrag.wireId);
-      if (targetWire && targetWire.waypoints) {
-        const nextWps = [...targetWire.waypoints];
+      if (targetWire) {
+        const nextWps = targetWire.waypoints ? [...targetWire.waypoints] : [];
         nextWps[activeWaypointDrag.index] = {
           x: Math.round(coords.x),
           y: Math.round(coords.y),
@@ -538,13 +689,15 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           : wire.fromPinId;
 
       const finalWaypoints = [...wireWaypoints, point];
-      onAddWire(wireStart.compId, wireStart.pinId, targetCompId, targetPinId, wireColor, finalWaypoints);
+      onAddWire(wireStart.compId, wireStart.pinId, targetCompId, targetPinId, wireColor, finalWaypoints, currentRoutingType);
       try {
         soundEngine.playRelayClick(true);
       } catch (_) {}
       setConnectionToast('⚡ Wire connected into existing line! (T-Junction tap)');
       setTimeout(() => setConnectionToast(null), 3500);
 
+      lastWireConnectTimeRef.current = Date.now();
+      wireStartRef.current = null;
       setWireStart(null);
       setWireWaypoints([]);
       setIsDraggingWire(false);
@@ -553,17 +706,38 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       return;
     }
 
-    // If mouse released over a hovered target pin, connect immediately with all waypoints!
-    if (wireStart && hoveredPin && (hoveredPin.compId !== wireStart.compId || hoveredPin.pinId !== wireStart.pinId)) {
-      onAddWire(wireStart.compId, wireStart.pinId, hoveredPin.compId, hoveredPin.pinId, wireColor, wireWaypoints);
+    // Determine target pin: either currently hovered or closest pin to cursor within 40px
+    const targetPin = hoveredPin || (() => {
+      if (!wireStart) return null;
+      const coords = getCanvasCoords(e.clientX, e.clientY);
+      let nearest: { compId: string; pinId: string; dist: number } | null = null;
+      for (const c of components) {
+        const pins = getComponentPins(c);
+        for (const p of pins) {
+          if (c.id === wireStart.compId && p.id === wireStart.pinId) continue;
+          const pos = getPinAbsolutePos(c, p);
+          const d = Math.hypot(pos.x - coords.x, pos.y - coords.y);
+          if (d <= 40 && (!nearest || d < nearest.dist)) {
+            nearest = { compId: c.id, pinId: p.id, dist: d };
+          }
+        }
+      }
+      return nearest ? { compId: nearest.compId, pinId: nearest.pinId } : null;
+    })();
+
+    // If mouse released over/near a target pin, connect immediately!
+    if (wireStart && targetPin && (targetPin.compId !== wireStart.compId || targetPin.pinId !== wireStart.pinId)) {
+      onAddWire(wireStart.compId, wireStart.pinId, targetPin.compId, targetPin.pinId, wireColor, wireWaypoints, currentRoutingType);
       try {
         soundEngine.playRelayClick(true);
       } catch (_) {}
-      const targetComp = components.find((c) => c.id === hoveredPin.compId);
+      const targetComp = components.find((c) => c.id === targetPin.compId);
       const targetName = targetComp?.properties?.label || targetComp?.name || targetComp?.type;
-      setConnectionToast(`⚡ Wire connected from ${wireStart.pinId} to ${targetName} (${hoveredPin.pinId})!`);
+      setConnectionToast(`⚡ Wire connected from ${wireStart.pinId} to ${targetName} (${targetPin.pinId})!`);
       setTimeout(() => setConnectionToast(null), 3500);
 
+      lastWireConnectTimeRef.current = Date.now();
+      wireStartRef.current = null;
       setWireStart(null);
       setWireWaypoints([]);
       setIsDraggingWire(false);
@@ -610,8 +784,8 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
       if (activeWaypointDrag) {
         const targetWire = wires.find((w) => w.id === activeWaypointDrag.wireId);
-        if (targetWire && targetWire.waypoints) {
-          const nextWps = [...targetWire.waypoints];
+        if (targetWire) {
+          const nextWps = targetWire.waypoints ? [...targetWire.waypoints] : [];
           nextWps[activeWaypointDrag.index] = {
             x: Math.round(coords.x),
             y: Math.round(coords.y),
@@ -665,7 +839,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       const targetPinId = pinTarget?.getAttribute('data-pin-id') || hoveredPin?.pinId;
 
       if (targetCompId && targetPinId && (targetCompId !== wireStart.compId || targetPinId !== wireStart.pinId)) {
-        onAddWire(wireStart.compId, wireStart.pinId, targetCompId, targetPinId, wireColor, wireWaypoints);
+        onAddWire(wireStart.compId, wireStart.pinId, targetCompId, targetPinId, wireColor, wireWaypoints, currentRoutingType);
         setWireStart(null);
         setWireWaypoints([]);
         setIsDraggingWire(false);
@@ -1082,7 +1256,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
     // If already in wire creation mode and clicking a DIFFERENT pin: connect immediately!
     if (activeStart && (activeStart.compId !== comp.id || activeStart.pinId !== pin.id)) {
-      onAddWire(activeStart.compId, activeStart.pinId, comp.id, pin.id, wireColor, wireWaypoints);
+      onAddWire(activeStart.compId, activeStart.pinId, comp.id, pin.id, wireColor, wireWaypoints, currentRoutingType);
       try {
         soundEngine.playRelayClick(true);
       } catch (_) {}
@@ -1148,7 +1322,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     if (activeStart) {
       // If released on a DIFFERENT pin, immediately connect!
       if (activeStart.compId !== comp.id || activeStart.pinId !== pin.id) {
-        onAddWire(activeStart.compId, activeStart.pinId, comp.id, pin.id, wireColor, wireWaypoints);
+        onAddWire(activeStart.compId, activeStart.pinId, comp.id, pin.id, wireColor, wireWaypoints, currentRoutingType);
         try {
           soundEngine.playRelayClick(true);
         } catch (_) {}
@@ -1306,7 +1480,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     if (hoveredPin) {
       const comp = components.find((c) => c.id === hoveredPin.compId);
       if (comp) {
-        const pinDef = getComponentPins(comp).find((p) => p.id === hoveredPin.pinId);
+        const pinDef = findPinDef(getComponentPins(comp), hoveredPin.pinId);
         if (pinDef) {
           return getPinAbsolutePos(comp, pinDef);
         }
@@ -1384,6 +1558,55 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       return d;
     },
     [getWirePath]
+  );
+
+  // Clean, auto-adjusting 90° orthogonal Manhattan wire routing for Simple Wire & Schematic symbols
+  const getOrthogonalWirePath = useCallback(
+    (
+      x1: number,
+      y1: number,
+      x2: number,
+      y2: number,
+      waypoints: { x: number; y: number }[] = []
+    ) => {
+      if (waypoints && waypoints.length > 0) {
+        const pts = [{ x: x1, y: y1 }, ...waypoints, { x: x2, y: y2 }];
+        let path = `M ${pts[0].x} ${pts[0].y}`;
+        for (let i = 0; i < pts.length - 1; i++) {
+          const pA = pts[i];
+          const pB = pts[i + 1];
+          if (Math.abs(pA.x - pB.x) <= 3 || Math.abs(pA.y - pB.y) <= 3) {
+            path += ` L ${pB.x} ${pB.y}`;
+          } else {
+            // Auto-adjust 90 degree step
+            const midX = Math.round((pA.x + pB.x) / 2);
+            path += ` L ${midX} ${pA.y} L ${midX} ${pB.y} L ${pB.x} ${pB.y}`;
+          }
+        }
+        return path;
+      }
+
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+
+      // Perfectly horizontal or vertical direct line
+      if (Math.abs(dy) <= 3) {
+        return `M ${x1} ${y1} L ${x2} ${y2}`;
+      }
+      if (Math.abs(dx) <= 3) {
+        return `M ${x1} ${y1} L ${x2} ${y2}`;
+      }
+
+      // Dynamic orthogonal Z-path: automatically adjusts when components move
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        const midX = Math.round(x1 + dx * 0.5);
+        return `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
+      } else {
+        const midY = Math.round(y1 + dy * 0.5);
+        return `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`;
+      }
+    },
+    []
   );
 
   return (
@@ -1500,6 +1723,34 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           <span>Rotate</span>
         </button>
 
+        {/* Wire Mode Toggle: Simple Wire (90° Auto-Adjust) vs Flexible Jumper */}
+        <button
+          id="bottom-wire-mode-btn"
+          onClick={() => {
+            setWireRoutingMode((prev) => (prev === 'orthogonal' ? 'curved' : 'orthogonal'));
+            try {
+              soundEngine.playRelayClick(true);
+            } catch (_) {}
+            setConnectionToast(
+              wireRoutingMode === 'orthogonal'
+                ? '〰️ Switched to Flexible Jumper Wire'
+                : '📐 Switched to Simple Wire (Auto-Adjustable 90° Orthogonal Lines)'
+            );
+            setTimeout(() => setConnectionToast(null), 3000);
+          }}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer shrink-0 active:scale-95 whitespace-nowrap ${
+            viewMode === 'schematic' || wireRoutingMode === 'orthogonal'
+              ? 'bg-cyan-500/25 hover:bg-cyan-500/35 text-cyan-300 border-cyan-400/80 shadow-md shadow-cyan-950/40'
+              : theme === 'light'
+              ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+              : 'bg-slate-900/60 hover:bg-slate-800 text-slate-300 border-slate-800'
+          }`}
+          title="Simple Wire: Automatically adjusts straight horizontal and vertical connections (90° bends) as you connect and move symbols!"
+        >
+          <span className="text-xs">{viewMode === 'schematic' || wireRoutingMode === 'orthogonal' ? '📐' : '〰️'}</span>
+          <span>{viewMode === 'schematic' || wireRoutingMode === 'orthogonal' ? 'Simple Wire (Auto-Adjust)' : 'Flexible Wire'}</span>
+        </button>
+
         <div className={`h-4 w-px mx-0.5 shrink-0 ${theme === 'light' ? 'bg-slate-300' : 'bg-slate-800'}`} />
 
         {/* Measurement Tab Button with Popover (Pops upwards) */}
@@ -1598,15 +1849,18 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           const comp2 = components.find((c) => c.id === wire.toCompId);
           if (!comp1 || !comp2) return null;
 
-          const def1 = getComponentPins(comp1).find((p) => p.id === wire.fromPinId);
-          const def2 = getComponentPins(comp2).find((p) => p.id === wire.toPinId);
+          const def1 = findPinDef(getComponentPins(comp1), wire.fromPinId);
+          const def2 = findPinDef(getComponentPins(comp2), wire.toPinId);
 
           if (!def1 || !def2) return null;
 
           const pos1 = getPinAbsolutePos(comp1, def1);
           const pos2 = getPinAbsolutePos(comp2, def2);
 
-          const pathData = getMultiSegmentWirePath(pos1, wire.waypoints || [], pos2);
+          const isSimpleWire = viewMode === 'schematic' || wireRoutingMode === 'orthogonal' || wire.routingType === 'orthogonal';
+          const pathData = isSimpleWire
+            ? getOrthogonalWirePath(pos1.x, pos1.y, pos2.x, pos2.y, wire.waypoints || [])
+            : getMultiSegmentWirePath(pos1, wire.waypoints || [], pos2);
           const isSelected = selectedWireId === wire.id;
           const isHigh = wire.signal === 'HIGH' || wire.signal === 'PWM';
           const isHoveredTap = hoveredWireTap?.wireId === wire.id;
@@ -1670,7 +1924,8 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                     targetCompId,
                     targetPinId,
                     wireColor,
-                    finalWaypoints
+                    finalWaypoints,
+                    currentRoutingType
                   );
                   try {
                     soundEngine.playRelayClick(true);
@@ -1762,13 +2017,27 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
               {/* Solder junction eyelets for waypoints / T-junctions */}
               {(wire.waypoints || []).map((wp, wpIdx) => (
                 <g key={`wp-dot-${wire.id}-${wpIdx}`} className="pointer-events-auto group">
-                  {/* Invisible wide hit area for easy drag & drop */}
+                  {/* Visual target halo when in wiring mode */}
+                  {wireStart && (
+                    <circle
+                      cx={wp.x}
+                      cy={wp.y}
+                      r={14}
+                      fill="rgba(16, 185, 129, 0.25)"
+                      stroke="#10b981"
+                      strokeWidth={1.5}
+                      strokeDasharray="3 3"
+                      className="animate-pulse pointer-events-none"
+                    />
+                  )}
+
+                  {/* Invisible wide hit area for easy drag & drop and click */}
                   <circle
                     cx={wp.x}
                     cy={wp.y}
-                    r={12}
+                    r={16}
                     fill="transparent"
-                    className="cursor-move"
+                    className="cursor-grab active:cursor-grabbing"
                     onMouseDown={(e) => {
                       e.stopPropagation();
                       if (wireStart) {
@@ -1782,7 +2051,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                             ? wire.toPinId
                             : wire.fromPinId;
                         const finalWaypoints = [...wireWaypoints, { x: wp.x, y: wp.y }];
-                        onAddWire(wireStart.compId, wireStart.pinId, targetCompId, targetPinId, wireColor, finalWaypoints);
+                        onAddWire(wireStart.compId, wireStart.pinId, targetCompId, targetPinId, wireColor, finalWaypoints, currentRoutingType);
                         try {
                           soundEngine.playRelayClick(true);
                         } catch (_) {}
@@ -1801,6 +2070,14 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                       setActiveWaypointDrag({ wireId: wire.id, index: wpIdx });
                       onSelectWire(wire.id);
                     }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const nextWps = (wire.waypoints || []).filter((_, idx) => idx !== wpIdx);
+                      onUpdateWire?.(wire.id, { waypoints: nextWps });
+                      setConnectionToast('⚡ Removed bend dot from wire');
+                      setTimeout(() => setConnectionToast(null), 2000);
+                    }}
                     onDoubleClick={(e) => {
                       e.stopPropagation();
                       // Double-click to start a new wire connection branching FROM this dot!
@@ -1812,25 +2089,63 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                       setTimeout(() => setConnectionToast(null), 3000);
                     }}
                   />
+
                   {/* Visual Solder / Junction Dot */}
                   <circle
                     cx={wp.x}
                     cy={wp.y}
-                    r={isSelected ? 6 : 4.5}
+                    r={isSelected ? 6.5 : 5}
                     fill={isSelected ? '#38bdf8' : wire.color || '#06b6d4'}
                     stroke="#ffffff"
                     strokeWidth={isSelected ? 2 : 1.5}
-                    className="cursor-move group-hover:scale-150 transition-transform shadow-md drop-shadow"
+                    className="cursor-grab active:cursor-grabbing group-hover:scale-125 transition-transform shadow-md drop-shadow"
                   >
-                    <title>{`Junction Dot #${wpIdx + 1} - Drag to reposition and avoid overlap | Double-click to branch wire from here`}</title>
+                    <title>{`Junction Dot #${wpIdx + 1} - Drag dot to move & avoid wire overlap | Click '+' to branch wire | Right-click to remove`}</title>
                   </circle>
                   <circle
                     cx={wp.x}
                     cy={wp.y}
-                    r={1.8}
+                    r={2}
                     fill="#ffffff"
                     className="pointer-events-none"
                   />
+
+                  {/* Dedicated Quick-Branch Button beside the dot */}
+                  <g
+                    className="cursor-pointer group/branch"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setWireStart({ compId: wire.fromCompId, pinId: wire.fromPinId, x: wp.x, y: wp.y });
+                      setWireWaypoints([{ x: wp.x, y: wp.y }]);
+                      setIsDraggingWire(true);
+                      if (wire.color) onWireColorChange?.(wire.color);
+                      setConnectionToast(`⚡ Started new wire branching from junction dot!`);
+                      setTimeout(() => setConnectionToast(null), 3000);
+                    }}
+                  >
+                    <circle
+                      cx={wp.x + 13}
+                      cy={wp.y - 12}
+                      r={7.5}
+                      fill="#10b981"
+                      stroke="#ffffff"
+                      strokeWidth={1.5}
+                      className="hover:scale-125 transition-transform shadow-lg drop-shadow"
+                    />
+                    <text
+                      x={wp.x + 13}
+                      y={wp.y - 9}
+                      textAnchor="middle"
+                      fill="#ffffff"
+                      fontSize="10"
+                      fontWeight="bold"
+                      className="select-none pointer-events-none font-mono"
+                    >
+                      +
+                    </text>
+                    <title>⚡ Click to branch new wire from this dot!</title>
+                  </g>
+
                   {isSelected && (
                     <text
                       x={wp.x}
@@ -1846,6 +2161,61 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                   )}
                 </g>
               ))}
+
+              {/* Midpoint Bend Handle for wires without waypoints (easy drag to prevent overlap) */}
+              {(!wire.waypoints || wire.waypoints.length === 0) && (isSelected || isHoveredTap) && (() => {
+                const midX = Math.round((pos1.x + pos2.x) / 2);
+                const midY = Math.round((pos1.y + pos2.y) / 2);
+                return (
+                  <g key={`mid-dot-${wire.id}`} className="pointer-events-auto cursor-grab active:cursor-grabbing group/mid">
+                    <circle
+                      cx={midX}
+                      cy={midY}
+                      r={16}
+                      fill="transparent"
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        if (wireStart) {
+                          // Connect into wire midpoint as a new junction
+                          const targetCompId =
+                            wire.fromCompId === wireStart.compId && wire.fromPinId === wireStart.pinId
+                              ? wire.toCompId
+                              : wire.fromCompId;
+                          const targetPinId =
+                            wire.fromCompId === wireStart.compId && wire.fromPinId === wireStart.pinId
+                              ? wire.toPinId
+                              : wire.fromPinId;
+                          onAddWire(wireStart.compId, wireStart.pinId, targetCompId, targetPinId, wireColor, [...wireWaypoints, { x: midX, y: midY }], currentRoutingType);
+                          setWireStart(null);
+                          setWireWaypoints([]);
+                          setIsDraggingWire(false);
+                          setConnectionToast('⚡ Wire branched from wire midpoint!');
+                          setTimeout(() => setConnectionToast(null), 3000);
+                          return;
+                        }
+                        // Create and start dragging new waypoint dot!
+                        onUpdateWire?.(wire.id, { waypoints: [{ x: midX, y: midY }] });
+                        setActiveWaypointDrag({ wireId: wire.id, index: 0 });
+                        onSelectWire(wire.id);
+                        setConnectionToast('⚡ Drag dot to route wire and avoid overlap!');
+                        setTimeout(() => setConnectionToast(null), 2500);
+                      }}
+                    />
+                    <circle
+                      cx={midX}
+                      cy={midY}
+                      r={5}
+                      fill={wire.color || '#06b6d4'}
+                      stroke="#ffffff"
+                      strokeWidth={1.5}
+                      strokeDasharray="2 2"
+                      className="group-hover/mid:scale-125 transition-transform drop-shadow"
+                    >
+                      <title>Drag to move bend dot & avoid overlapping wires | Click to add junction</title>
+                    </circle>
+                  </g>
+                );
+              })()}
               {/* Live Signal Animation during active simulation */}
               {isRunning && isHigh && (
                 <path
@@ -1901,11 +2271,14 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
         {/* Dynamic Rubber-band Wire with Waypoints while routing */}
         {wireStart && (() => {
-          const previewPath = getMultiSegmentWirePath(
-            { x: wireStart.x, y: wireStart.y },
-            wireWaypoints,
-            { x: targetPreviewPos.x, y: targetPreviewPos.y }
-          );
+          const isSimpleWirePreview = viewMode === 'schematic' || wireRoutingMode === 'orthogonal';
+          const previewPath = isSimpleWirePreview
+            ? getOrthogonalWirePath(wireStart.x, wireStart.y, targetPreviewPos.x, targetPreviewPos.y, wireWaypoints)
+            : getMultiSegmentWirePath(
+                { x: wireStart.x, y: wireStart.y },
+                wireWaypoints,
+                { x: targetPreviewPos.x, y: targetPreviewPos.y }
+              );
 
           return (
             <g className="pointer-events-none">
@@ -2158,7 +2531,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                   }
 
                   if (targetPinId && (comp.id !== wireStart.compId || targetPinId !== wireStart.pinId)) {
-                    onAddWire(wireStart.compId, wireStart.pinId, comp.id, targetPinId, wireColor, wireWaypoints);
+                    onAddWire(wireStart.compId, wireStart.pinId, comp.id, targetPinId, wireColor, wireWaypoints, currentRoutingType);
                     try {
                       soundEngine.playRelayClick(true);
                     } catch (_) {}
@@ -2232,7 +2605,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                   }
 
                   if (targetPinId && (comp.id !== wireStart.compId || targetPinId !== wireStart.pinId)) {
-                    onAddWire(wireStart.compId, wireStart.pinId, comp.id, targetPinId, wireColor, wireWaypoints);
+                    onAddWire(wireStart.compId, wireStart.pinId, comp.id, targetPinId, wireColor, wireWaypoints, currentRoutingType);
                     try {
                       soundEngine.playRelayClick(true);
                     } catch (_) {}
@@ -2273,6 +2646,44 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                 <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 z-40 bg-cyan-950/95 border border-cyan-400 text-cyan-200 text-[8px] font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap pointer-events-none flex items-center gap-1 animate-bounce">
                   <Cable className="w-2.5 h-2.5 text-cyan-300" />
                   <span>Click to Connect</span>
+                </div>
+              )}
+
+              {/* Quick Symbol <-> Real Component Switcher for Selected Component */}
+              {isSelected && !wireStart && onUpdateProperty && (
+                <div 
+                  className="absolute -top-7 left-1/2 -translate-x-1/2 z-50 flex items-center gap-0.5 bg-slate-950/95 border border-cyan-500/80 text-white p-0.5 rounded-lg shadow-xl backdrop-blur-md pointer-events-auto text-[9.5px] font-mono whitespace-nowrap"
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => {
+                      onUpdateProperty(comp.id, 'renderMode', 'symbol');
+                      try { soundEngine.playRelayClick(true); } catch (_) {}
+                    }}
+                    className={`px-2 py-0.5 rounded transition cursor-pointer flex items-center gap-1 ${
+                      comp.renderMode === 'symbol' || (comp.renderMode !== 'real' && viewMode === 'schematic')
+                        ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                    title="Render this component as EDA Schematic Symbol"
+                  >
+                    <span>⚡ Symbol</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      onUpdateProperty(comp.id, 'renderMode', 'real');
+                      try { soundEngine.playRelayClick(true); } catch (_) {}
+                    }}
+                    className={`px-2 py-0.5 rounded transition cursor-pointer flex items-center gap-1 ${
+                      comp.renderMode === 'real' || (comp.renderMode !== 'symbol' && viewMode !== 'schematic')
+                        ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                    title="Render this component as Real Physical Component"
+                  >
+                    <span>📦 Real</span>
+                  </button>
                 </div>
               )}
 
@@ -2490,6 +2901,20 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
     properties: { ...comp.properties, ...props }
   }), [comp, props]);
 
+  // SCHEMATIC SYMBOL MODE: Render authentic electronic schematic symbols
+  // Check if component explicitly requested 'symbol', or if viewMode is 'schematic' (and comp not explicitly set to 'real')
+  const shouldRenderSymbol = comp.renderMode === 'symbol' || (comp.renderMode !== 'real' && viewMode === 'schematic');
+  if (shouldRenderSymbol) {
+    return (
+      <SchematicSymbol
+        comp={effectiveComp}
+        pinStates={pinStates}
+        isRunning={isRunning}
+        renderPin={renderPin}
+      />
+    );
+  }
+
   // MICROCONTROLLER BOARDS (ESP32 DevKit V1, Arduino UNO R3, Raspberry Pi Pico)
   if (comp.type.startsWith('mcu-')) {
     return (
@@ -2705,6 +3130,16 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
   // COMMON GROUND TERMINAL (GND)
   if (comp.type === 'ground-node') {
     return <RealGroundNode comp={effectiveComp} renderPin={renderPin} />;
+  }
+
+  // 9V ALKALINE BATTERY (PP3)
+  if (comp.type === 'battery-9v' || comp.type.startsWith('battery')) {
+    return <Real9vBattery comp={effectiveComp} renderPin={renderPin} />;
+  }
+
+  // NTC DISC THERMISTOR
+  if (comp.type === 'sensor-thermistor' || comp.type.includes('thermistor')) {
+    return <RealThermistor comp={effectiveComp} renderPin={renderPin} />;
   }
 
   // INTEGRATED CIRCUITS & DIP PACKAGES (NE555, LM741, LM358, 74xx, CD4017, L293D, Universal IC, etc.)

@@ -78,6 +78,7 @@ export interface CircuitComponent {
   rotation: number; // 0, 90, 180, 270
   properties: Record<string, any>;
   runtimeState?: Record<string, any>;
+  renderMode?: 'auto' | 'symbol' | 'real'; // whether to render as schematic symbol, real 3D/realistic component, or follow viewMode
 }
 
 export interface Wire {
@@ -92,6 +93,7 @@ export interface Wire {
   hasWarning?: boolean;
   warningMessage?: string;
   waypoints?: { x: number; y: number }[];
+  routingType?: 'orthogonal' | 'curved'; // 'orthogonal' = Simple auto-adjustable straight 90-degree wire
 }
 
 export type ProgrammingLanguage = 'cpp' | 'python';
@@ -148,7 +150,7 @@ export interface MCUState {
   cycleCount: number;
 }
 
-export type ViewMode = 'breadboard' | 'schematic';
+export type ViewMode = 'schematic' | 'breadboard' | 'pcb';
 
 export interface LiveWiringStatus {
   isWiring: boolean;

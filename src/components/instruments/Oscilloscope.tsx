@@ -353,35 +353,54 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   const ch1Resolved = resolveProbeTargetReading(controlledRedProbe || ch1Pin, pinStates, wires);
   const ch1Key = ch1Pin ? `${ch1Pin.compId}:${ch1Pin.pinId}` : '';
   const ch1State = (ch1Key && pinStates) ? pinStates[ch1Key] : null;
-  let ch1RawVoltage = ch1Resolved.amplitude !== undefined
-    ? ch1Resolved.amplitude / 2
-    : ch1State?.amplitude !== undefined
-      ? ch1State.amplitude / 2
-      : ch1Resolved.isLive
-        ? ch1Resolved.voltage
-        : (ch1State?.voltage ?? 0);
-  let ch1Pwm = ch1Resolved.pwmDuty ?? ch1State?.pwmDuty ?? 0;
-  let ch1IsAc = Boolean(ch1Resolved.isAc || ch1State?.isAc);
+
+  const isCh1AcSource = Boolean(
+    isCh1DirectFg || isCh1CanvasFg || ch1Resolved.isAc || ch1State?.isAc ||
+    (ch1Resolved.amplitude !== undefined && ch1Resolved.amplitude > 0) ||
+    (ch1State?.amplitude !== undefined && ch1State.amplitude > 0)
+  );
+
   let ch1Waveform: WaveformType = (ch1Resolved.waveform as WaveformType) || (ch1State?.waveform as WaveformType) || 'sine';
   let ch1FrequencyNum = ch1Resolved.frequency || ch1State?.frequency || 1000;
   let ch1OffsetVal = ch1Resolved.offset ?? ch1State?.offset ?? 0;
   let ch1DutyVal = ch1Resolved.duty ?? ch1State?.duty ?? 50;
 
-  if (isCh1DirectFg || isCh1CanvasFg) {
+  // Determine true incoming amplitude
+  let ch1AmpVpp = 5.0;
+  if (ch1Resolved.amplitude !== undefined && ch1Resolved.amplitude > 0) {
+    ch1AmpVpp = ch1Resolved.amplitude;
+  } else if (ch1State?.amplitude !== undefined && ch1State.amplitude > 0) {
+    ch1AmpVpp = ch1State.amplitude;
+  } else if (isCh1DirectFg && functionGenState) {
+    ch1AmpVpp = functionGenState.amplitude;
+  } else if (isCh1CanvasFg && canvasFgComp) {
+    ch1AmpVpp = Number(canvasFgComp.properties?.amplitude) || 5.0;
+  } else if (ch1Resolved.voltage > 0) {
+    ch1AmpVpp = ch1Resolved.voltage * 2;
+  }
+
+  let ch1RawVoltage = isCh1AcSource ? ch1AmpVpp / 2 : (ch1Resolved.isLive ? ch1Resolved.voltage : (ch1State?.voltage ?? 0));
+  let ch1Pwm = ch1Resolved.pwmDuty ?? ch1State?.pwmDuty ?? 0;
+  let ch1IsAc = isCh1AcSource;
+
+  if (isCh1DirectFg) {
     ch1IsAc = true;
     if (functionGenState) {
       ch1Waveform = functionGenState.waveform;
       ch1FrequencyNum = functionGenState.frequency;
       ch1OffsetVal = functionGenState.offset;
       ch1DutyVal = functionGenState.duty;
+      ch1AmpVpp = functionGenState.amplitude;
       ch1RawVoltage = functionGenState.isOn ? (functionGenState.amplitude / 2) : 0;
-    } else if (canvasFgComp) {
-      ch1Waveform = (canvasFgComp.properties?.waveform as WaveformType) || 'sine';
-      ch1FrequencyNum = Number(canvasFgComp.properties?.frequency) || 1000;
-      ch1OffsetVal = Number(canvasFgComp.properties?.offset) || 0;
-      ch1DutyVal = Number(canvasFgComp.properties?.duty) || 50;
-      ch1RawVoltage = canvasFgComp.properties?.isOn !== false ? (Number(canvasFgComp.properties?.amplitude) || 5.0) / 2 : 0;
     }
+  } else if (isCh1CanvasFg && canvasFgComp) {
+    ch1IsAc = true;
+    ch1Waveform = (canvasFgComp.properties?.waveform as WaveformType) || 'sine';
+    ch1FrequencyNum = Number(canvasFgComp.properties?.frequency) || 1000;
+    ch1OffsetVal = Number(canvasFgComp.properties?.offset) || 0;
+    ch1DutyVal = Number(canvasFgComp.properties?.duty) || 50;
+    ch1AmpVpp = Number(canvasFgComp.properties?.amplitude) || 5.0;
+    ch1RawVoltage = canvasFgComp.properties?.isOn !== false ? ch1AmpVpp / 2 : 0;
   }
 
   // Signal calculations for CH2 (resolving terminals, pins, and wires)
@@ -391,40 +410,79 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   const ch2Resolved = resolveProbeTargetReading(controlledBlackProbe || ch2Pin, pinStates, wires);
   const ch2Key = ch2Pin ? `${ch2Pin.compId}:${ch2Pin.pinId}` : '';
   const ch2State = (ch2Key && pinStates) ? pinStates[ch2Key] : null;
-  let ch2RawVoltage = ch2Resolved.amplitude !== undefined
-    ? ch2Resolved.amplitude / 2
-    : ch2State?.amplitude !== undefined
-      ? ch2State.amplitude / 2
-      : ch2Resolved.isLive
-        ? ch2Resolved.voltage
-        : (ch2State?.voltage ?? 0);
-  let ch2Pwm = ch2Resolved.pwmDuty ?? ch2State?.pwmDuty ?? 0;
-  let ch2IsAc = Boolean(ch2Resolved.isAc || ch2State?.isAc);
+
+  const isCh2AcSource = Boolean(
+    isCh2DirectFg || isCh2CanvasFg || ch2Resolved.isAc || ch2State?.isAc ||
+    (ch2Resolved.amplitude !== undefined && ch2Resolved.amplitude > 0) ||
+    (ch2State?.amplitude !== undefined && ch2State.amplitude > 0)
+  );
+
   let ch2Waveform: WaveformType = (ch2Resolved.waveform as WaveformType) || (ch2State?.waveform as WaveformType) || 'sine';
   let ch2FrequencyNum = ch2Resolved.frequency || ch2State?.frequency || 1000;
   let ch2OffsetVal = ch2Resolved.offset ?? ch2State?.offset ?? 0;
   let ch2DutyVal = ch2Resolved.duty ?? ch2State?.duty ?? 50;
 
-  if (ch2State?.amplitude !== undefined) {
-    ch2RawVoltage = ch2State.amplitude / 2;
+  let ch2AmpVpp = 5.0;
+  if (ch2Resolved.amplitude !== undefined && ch2Resolved.amplitude > 0) {
+    ch2AmpVpp = ch2Resolved.amplitude;
+  } else if (ch2State?.amplitude !== undefined && ch2State.amplitude > 0) {
+    ch2AmpVpp = ch2State.amplitude;
+  } else if (isCh2DirectFg && functionGenState) {
+    ch2AmpVpp = functionGenState.amplitude;
+  } else if (isCh2CanvasFg && canvasFgComp) {
+    ch2AmpVpp = Number(canvasFgComp.properties?.amplitude) || 5.0;
+  } else if (ch2Resolved.voltage > 0) {
+    ch2AmpVpp = ch2Resolved.voltage * 2;
   }
 
-  if (isCh2DirectFg || isCh2CanvasFg) {
+  let ch2RawVoltage = isCh2AcSource ? ch2AmpVpp / 2 : (ch2Resolved.isLive ? ch2Resolved.voltage : (ch2State?.voltage ?? 0));
+  let ch2Pwm = ch2Resolved.pwmDuty ?? ch2State?.pwmDuty ?? 0;
+  let ch2IsAc = isCh2AcSource;
+
+  if (isCh2DirectFg) {
     ch2IsAc = true;
     if (functionGenState) {
       ch2Waveform = functionGenState.waveform;
       ch2FrequencyNum = functionGenState.frequency;
       ch2OffsetVal = functionGenState.offset;
       ch2DutyVal = functionGenState.duty;
+      ch2AmpVpp = functionGenState.amplitude;
       ch2RawVoltage = functionGenState.isOn ? (functionGenState.amplitude / 2) : 0;
-    } else if (canvasFgComp) {
-      ch2Waveform = (canvasFgComp.properties?.waveform as WaveformType) || 'sine';
-      ch2FrequencyNum = Number(canvasFgComp.properties?.frequency) || 1000;
-      ch2OffsetVal = Number(canvasFgComp.properties?.offset) || 0;
-      ch2DutyVal = Number(canvasFgComp.properties?.duty) || 50;
-      ch2RawVoltage = canvasFgComp.properties?.isOn !== false ? (Number(canvasFgComp.properties?.amplitude) || 5.0) / 2 : 0;
     }
+  } else if (isCh2CanvasFg && canvasFgComp) {
+    ch2IsAc = true;
+    ch2Waveform = (canvasFgComp.properties?.waveform as WaveformType) || 'sine';
+    ch2FrequencyNum = Number(canvasFgComp.properties?.frequency) || 1000;
+    ch2OffsetVal = Number(canvasFgComp.properties?.offset) || 0;
+    ch2DutyVal = Number(canvasFgComp.properties?.duty) || 50;
+    ch2AmpVpp = Number(canvasFgComp.properties?.amplitude) || 5.0;
+    ch2RawVoltage = canvasFgComp.properties?.isOn !== false ? ch2AmpVpp / 2 : 0;
   }
+
+  // Auto-adapt timebase and vertical scale when incoming external signal connects or changes frequency
+  const lastAutoFreqRef = useRef<number>(0);
+  useEffect(() => {
+    const activeFreq = ch1Resolved.frequency || (ch1IsAc ? ch1FrequencyNum : 0);
+    const activeVpp = ch1AmpVpp || (ch1RawVoltage > 0 ? ch1RawVoltage * 2 : 0);
+
+    if (activeFreq > 0 && Math.abs(activeFreq - lastAutoFreqRef.current) / Math.max(1, lastAutoFreqRef.current) > 0.3) {
+      lastAutoFreqRef.current = activeFreq;
+      const periodMs = 1000 / activeFreq;
+      const targetTimeDiv = Math.max(0.01, (periodMs * 3.5) / 10);
+      const bestTimeDiv = TIME_DIV_STEPS.reduce((prev, curr) =>
+        Math.abs(curr - targetTimeDiv) < Math.abs(prev - targetTimeDiv) ? curr : prev
+      );
+      setTimeDiv(bestTimeDiv);
+
+      if (activeVpp > 0) {
+        const targetVoltsDiv = Math.max(0.1, activeVpp / 4.5);
+        const bestVoltsDiv = VOLTS_DIV_STEPS.reduce((prev, curr) =>
+          Math.abs(curr - targetVoltsDiv) < Math.abs(prev - targetVoltsDiv) ? curr : prev
+        );
+        setCh1VoltsDiv(bestVoltsDiv);
+      }
+    }
+  }, [ch1Resolved.frequency, ch1IsAc, ch1FrequencyNum, ch1AmpVpp, ch1RawVoltage]);
 
   // Feature 2: Peak-to-Peak variation multiplier based on Time Delay variable
   // As time delay varies, phase propagation and transmission dispersion modifies the Vpp peak-to-peak amplitude
@@ -446,11 +504,12 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
     const f1 = ch1FrequencyNum > 0 ? ch1FrequencyNum : 1000;
     const periodMs = 1000 / f1;
     const calcPeriodPx = (periodMs / Math.max(0.001, timeDiv)) * divX;
-    const periodPx = Math.max(8, Math.min(screenWidth * 3.5, calcPeriodPx));
+    const periodPx = Math.max(1, calcPeriodPx);
 
     const delayPx = (timeDelay / Math.max(0.001, timeDiv)) * divX;
     const hPosPx = hPosDiv * divX;
     const triggerPhase = triggerEdge === 'FALLING' ? 0.5 : 0.0;
+    const livePhaseSweep = (!isFrozen && isRunning) ? ((animTime * Math.min(200, f1) * 0.00008) % 1) : 0;
 
     let maxV = -999;
     let minV = 999;
@@ -464,7 +523,7 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
       if (isCh1Active) {
         // Precise phase synchronized to trigger with horizontal position and time delay offset
         const effectiveX = x + hPosPx + delayPx;
-        const normPhase = (((effectiveX / periodPx) - triggerPhase) % 1 + 1) % 1;
+        const normPhase = (((effectiveX / periodPx) - triggerPhase + livePhaseSweep) % 1 + 1) % 1;
 
         if (ch1Pwm > 0) {
           // PWM Square Wave Base Amplitude
@@ -555,7 +614,7 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   }, [
     ch1Enabled, ch1RawVoltage, ch1Pwm, ch1IsAc, ch1Waveform, ch1FrequencyNum, ch1OffsetVal, ch1DutyVal,
     ch1VoltsDiv, ch1PosDiv, timeDiv, hPosDiv, timeDelay, vppMultiplier, vppVariationEnabled,
-    bandwidthMode, isRunning, isCh1DirectFg, isCh1CanvasFg, divX, divY, centerY, screenHeight, triggerEdge
+    bandwidthMode, isRunning, isFrozen, animTime, isCh1DirectFg, isCh1CanvasFg, divX, divY, centerY, screenHeight, triggerEdge
   ]);
 
   // Generate SVG Points for CH2
@@ -568,11 +627,12 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
     const f2 = ch2FrequencyNum > 0 ? ch2FrequencyNum : 1000;
     const periodMs2 = 1000 / f2;
     const calcPeriodPx2 = (periodMs2 / Math.max(0.001, timeDiv)) * divX;
-    const periodPx = Math.max(8, Math.min(screenWidth * 3.5, calcPeriodPx2));
+    const periodPx = Math.max(1, calcPeriodPx2);
 
     const delayPx = (timeDelay / Math.max(0.001, timeDiv)) * divX;
     const hPosPx = hPosDiv * divX;
     const triggerPhase = triggerEdge === 'FALLING' ? 0.5 : 0.0;
+    const livePhaseSweep2 = (!isFrozen && isRunning) ? ((animTime * Math.min(200, f2) * 0.00008) % 1) : 0;
 
     const isCh2Active = isRunning || isCh2DirectFg || isCh2CanvasFg || ch2IsAc || ch2RawVoltage > 0 || ch2Pwm > 0;
 
@@ -582,7 +642,7 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
 
       if (isCh2Active) {
         const effectiveX = x + hPosPx + delayPx;
-        const normPhase = (((effectiveX / periodPx) - triggerPhase) % 1 + 1) % 1;
+        const normPhase = (((effectiveX / periodPx) - triggerPhase + livePhaseSweep2) % 1 + 1) % 1;
 
         if (ch2Pwm > 0) {
           const baseVpp = 3.3 * vppMultiplier;
@@ -662,7 +722,7 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   }, [
     ch2Enabled, ch2RawVoltage, ch2Pwm, ch2IsAc, ch2Waveform, ch2FrequencyNum, ch2OffsetVal, ch2DutyVal,
     ch2VoltsDiv, ch2PosDiv, timeDiv, hPosDiv, timeDelay, vppMultiplier, vppVariationEnabled,
-    bandwidthMode, isRunning, isCh2DirectFg, isCh2CanvasFg, divX, divY, centerY, screenHeight, triggerEdge
+    bandwidthMode, isRunning, isFrozen, animTime, isCh2DirectFg, isCh2CanvasFg, divX, divY, centerY, screenHeight, triggerEdge
   ]);
 
   // Trigger Level line in screen coordinates
@@ -671,21 +731,19 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   const triggerY = centerY - (triggerLevel / activeVoltsDiv) * divY - activePosDiv * divY;
   const triggerX = screenWidth / 2 + hPosDiv * divX;
 
-  // Accurate measurements readout
-  const isCh1FgSource = isCh1DirectFg || isCh1CanvasFg || ch1State?.amplitude !== undefined;
-  const fgAmp = ch1State?.amplitude ?? (functionGenState?.amplitude ?? 5.0);
-  const fgOff = ch1State?.offset ?? (functionGenState?.offset ?? 0);
+  // Accurate measurements readout matching incoming external signal
+  const isCh1FgSource = isCh1DirectFg || isCh1CanvasFg || ch1Resolved.amplitude !== undefined || ch1State?.amplitude !== undefined;
   const ch1Vmax = isCh1FgSource
-    ? ((fgAmp / 2 + Math.max(0, fgOff)) * vppMultiplier).toFixed(2)
-    : ch1VmaxVal > 0 ? ch1VmaxVal.toFixed(2) : ch1Pwm > 0 ? (3.3 * vppMultiplier).toFixed(2) : '0.00';
+    ? ((ch1AmpVpp / 2 + Math.max(0, ch1OffsetVal)) * vppMultiplier).toFixed(2)
+    : ch1VmaxVal > 0 ? ch1VmaxVal.toFixed(2) : ch1Pwm > 0 ? (3.3 * vppMultiplier).toFixed(2) : (ch1RawVoltage > 0 ? ch1RawVoltage.toFixed(2) : '0.00');
 
   const ch1Vpp = isCh1FgSource
-    ? (fgAmp * vppMultiplier).toFixed(2)
+    ? (ch1AmpVpp * vppMultiplier).toFixed(2)
     : ch1VppVal > 0 ? ch1VppVal.toFixed(2) : ch1Pwm > 0 ? (3.3 * vppMultiplier).toFixed(2) : '0.00';
 
   const ch1Freq = ch1IsAc
-    ? (ch1FrequencyNum >= 1000 ? `${(ch1FrequencyNum / 1000).toFixed(2)} kHz` : `${ch1FrequencyNum} Hz`)
-    : ch1Pwm > 0 ? '1.00 kHz' : ch1RawVoltage > 0 ? 'DC' : '0.00 Hz';
+    ? (ch1FrequencyNum >= 1000 ? `${(ch1FrequencyNum / 1000).toFixed(2)} kHz` : `${ch1FrequencyNum.toFixed(1)} Hz`)
+    : ch1Pwm > 0 ? (ch1FrequencyNum ? `${ch1FrequencyNum} Hz` : '490 Hz') : ch1RawVoltage > 0 ? 'DC' : '0.00 Hz';
 
   const ch1Duty = (ch1Waveform === 'square' && (isCh1FgSource || ch1DutyVal !== undefined))
     ? `${ch1DutyVal}%`

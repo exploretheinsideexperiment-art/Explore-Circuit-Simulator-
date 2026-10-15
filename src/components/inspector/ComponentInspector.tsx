@@ -1237,10 +1237,13 @@ export const ComponentInspector: React.FC<ComponentInspectorProps> = ({
                       { cap: 10, unit: 'µF' },
                       { cap: 22, unit: 'µF' },
                       { cap: 47, unit: 'µF' },
+                      { cap: 10, unit: 'µF' },
                       { cap: 100, unit: 'µF' },
-                      { cap: 220, unit: 'µF' },
                       { cap: 470, unit: 'µF' },
                       { cap: 1000, unit: 'µF' },
+                      { cap: 2200, unit: 'µF' },
+                      { cap: 4700, unit: 'µF' },
+                      { cap: 10000, unit: 'µF' },
                     ].map((p, idx) => (
                       <button
                         key={idx}

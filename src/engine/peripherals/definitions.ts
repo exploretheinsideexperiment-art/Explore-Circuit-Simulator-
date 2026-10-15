@@ -46,6 +46,32 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
       label: 'RPi Pico'
     }
   },
+  {
+    type: 'mcu-arduino-nano',
+    name: 'Arduino Nano',
+    category: 'Arduino',
+    description: 'Compact breadboard-friendly ATmega328P Arduino board with 14 digital and 8 analog pins.',
+    width: 100,
+    height: 200,
+    pins: [],
+    defaultProperties: {
+      boardId: 'arduino-nano',
+      label: 'Arduino Nano'
+    }
+  },
+  {
+    type: 'mcu-esp8266-nodemcu',
+    name: 'ESP8266 NodeMCU',
+    category: 'ESP Boards',
+    description: 'Popular ESP8266 Wi-Fi IoT development board based on ESP-12E module.',
+    width: 130,
+    height: 220,
+    pins: [],
+    defaultProperties: {
+      boardId: 'esp8266-nodemcu',
+      label: 'ESP8266 NodeMCU'
+    }
+  },
 
   // --- Breadboards ---
   {
@@ -545,6 +571,23 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
     }
   },
   {
+    type: 'sensor-thermistor',
+    name: 'NTC Thermistor (10kΩ)',
+    category: 'Sensors',
+    description: 'Negative Temperature Coefficient (NTC) thermistor whose resistance drops with heat. Essential temperature sensor.',
+    width: 45,
+    height: 55,
+    pins: [
+      { id: 'PIN1', name: 'Pin 1', type: 'passive', x: 14, y: 48 },
+      { id: 'PIN2', name: 'Pin 2', type: 'passive', x: 31, y: 48 },
+    ],
+    defaultProperties: {
+      resistance: 10000,
+      temperature: 25,
+      label: 'TH1'
+    }
+  },
+  {
     type: 'sensor-pir',
     name: 'PIR Motion Sensor',
     category: 'Sensors',
@@ -787,6 +830,23 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
     ],
     defaultProperties: {
       label: 'GND'
+    }
+  },
+  {
+    type: 'battery-9v',
+    name: '9V Battery (Alkaline PP3)',
+    category: 'Power',
+    description: 'Classic 9V PP3 transistor battery with snap connector terminals (+9V Red and 0V Black) for standalone electronic projects.',
+    width: 60,
+    height: 84,
+    pins: [
+      { id: 'POS', name: 'Positive (+9V)', label: '+', type: 'power_vcc', x: 20, y: 12, voltage: 9.0 },
+      { id: 'NEG', name: 'Negative (GND)', label: '-', type: 'power_gnd', x: 40, y: 12, voltage: 0 },
+    ],
+    defaultProperties: {
+      voltage: 9.0,
+      capacityMah: 550,
+      label: 'BT1'
     }
   },
 
@@ -1362,6 +1422,86 @@ export function getComponentPins(comp: CircuitComponent): PinDef[] {
 
   const template = COMPONENT_CATALOG.find((c) => c.type === comp.type);
   return template?.pins || [];
+}
+
+/**
+ * Smart pin resolver that finds pin by ID, label, name, or common engineering aliases
+ * (e.g. D13 <-> 13, PIN_1 <-> PIN1, G <-> GATE, GND <-> GND_TOP, 5V <-> VCC)
+ */
+export function findPinDef(pins: PinDef[], pinId: string): PinDef | undefined {
+  if (!pins || pins.length === 0) return undefined;
+  // 1. Exact match
+  const exact = pins.find((p) => p.id === pinId);
+  if (exact) return exact;
+
+  // 2. Case-insensitive
+  const lower = pinId.toLowerCase();
+  const caseMatch = pins.find((p) => p.id.toLowerCase() === lower);
+  if (caseMatch) return caseMatch;
+
+  // 3. Normalized number / GPIO / D prefix (e.g. D13 <-> 13, GPIO2 <-> 2, D2 <-> 2)
+  const normPin = pinId.toUpperCase().replace(/^(GPIO|IO|D|PIN_|PIN)/, '');
+  if (normPin.length > 0) {
+    const matchNum = pins.find((p) => {
+      const pNorm = p.id.toUpperCase().replace(/^(GPIO|IO|D|PIN_|PIN)/, '');
+      return pNorm === normPin || p.label === pinId || p.name === pinId || p.label === `D${normPin}` || p.label === `~${normPin}`;
+    });
+    if (matchNum) return matchNum;
+  }
+
+  // 4. Pin 1 / Pin 2 aliases (PIN1 <-> PIN_1 <-> P1 <-> 1 <-> T1 <-> POS <-> A)
+  if (['PIN_1', 'PIN1', '1', 'T1', 'P1', 'PRI1'].includes(pinId.toUpperCase())) {
+    const p1 = pins.find((p) => ['PIN1', 'PIN_1', '1', 'T1', 'P1', 'POS', 'ANODE', 'A', 'PRI1'].includes(p.id.toUpperCase()));
+    if (p1) return p1;
+  }
+  if (['PIN_2', 'PIN2', '2', 'T2', 'P2', 'SEC1'].includes(pinId.toUpperCase())) {
+    const p2 = pins.find((p) => ['PIN2', 'PIN_2', '2', 'T2', 'P2', 'NEG', 'CATHODE', 'K', 'SEC1'].includes(p.id.toUpperCase()));
+    if (p2) return p2;
+  }
+
+  // 5. MOSFET & Transistor pin aliases (G <-> GATE, D <-> DRAIN, S <-> SOURCE, B <-> BASE, C <-> COLLECTOR, E <-> EMITTER)
+  const mapAliases: Record<string, string[]> = {
+    'G': ['GATE', 'G'],
+    'GATE': ['GATE', 'G'],
+    'D': ['DRAIN', 'D'],
+    'DRAIN': ['DRAIN', 'D'],
+    'S': ['SOURCE', 'S'],
+    'SOURCE': ['SOURCE', 'S'],
+    'B': ['BASE', 'B'],
+    'BASE': ['BASE', 'B'],
+    'C': ['COLLECTOR', 'C'],
+    'COLLECTOR': ['COLLECTOR', 'C'],
+    'E': ['EMITTER', 'E'],
+    'EMITTER': ['EMITTER', 'E'],
+    'A': ['ANODE', 'A', 'POS', '+'],
+    'ANODE': ['ANODE', 'A', 'POS', '+'],
+    'K': ['CATHODE', 'K', 'NEG', '-'],
+    'CATHODE': ['CATHODE', 'K', 'NEG', '-'],
+  };
+  const aliases = mapAliases[pinId.toUpperCase()];
+  if (aliases) {
+    const found = pins.find((p) => aliases.includes(p.id.toUpperCase()));
+    if (found) return found;
+  }
+
+  // 6. Ground aliases (GND, GND_TOP, GND_L, GND_R, GND_1, GND_B1, etc.)
+  if (pinId.toUpperCase().includes('GND')) {
+    const gnd = pins.find((p) => p.id.toUpperCase().includes('GND') || p.type === 'power_gnd');
+    if (gnd) return gnd;
+  }
+
+  // 7. Power VCC aliases (5V, 3V3, 3.3V, VCC, V+, VIN)
+  if (['5V', 'VCC', 'V+'].includes(pinId.toUpperCase())) {
+    const vcc = pins.find((p) => ['5V', 'VCC', 'V+'].includes(p.id.toUpperCase()) || p.type === 'power_vcc');
+    if (vcc) return vcc;
+  }
+  if (['3V3', '3.3V'].includes(pinId.toUpperCase())) {
+    const p33 = pins.find((p) => p.id.toUpperCase().includes('3V3') || p.id.toUpperCase().includes('3.3V'));
+    if (p33) return p33;
+  }
+
+  // 8. Partial fallback
+  return pins.find((p) => p.id.toLowerCase().includes(lower) || lower.includes(p.id.toLowerCase()));
 }
 
 /**

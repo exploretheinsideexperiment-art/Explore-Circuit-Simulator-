@@ -114,6 +114,44 @@ export const TopBar: React.FC<TopBarProps> = ({
           <span>Components</span>
         </button>
 
+        {/* Play / Run Simulation Control */}
+        {!isRunning ? (
+          <button
+            id="topbar-play-simulation-btn"
+            onClick={onRun}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-500/25 transition active:scale-95 cursor-pointer shrink-0 whitespace-nowrap"
+            title="Play: Start Circuit Simulation"
+          >
+            <Play className="w-4 h-4 fill-current stroke-[2.5]" />
+            <span>Play</span>
+          </button>
+        ) : (
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              id="topbar-pause-simulation-btn"
+              onClick={isPaused ? onRun : onPause}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-bold transition active:scale-95 cursor-pointer shrink-0 ${
+                isPaused
+                  ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border border-amber-500/40'
+              }`}
+              title={isPaused ? "Resume Simulation" : "Pause Simulation"}
+            >
+              {isPaused ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5 fill-current" />}
+              <span>{isPaused ? 'Resume' : 'Pause'}</span>
+            </button>
+            <button
+              id="topbar-stop-simulation-btn"
+              onClick={onStop}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/40 text-xs font-bold transition active:scale-95 cursor-pointer shrink-0"
+              title="Stop Simulation"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+              <span>Stop</span>
+            </button>
+          </div>
+        )}
+
         {/* Image Controls: Zoom In, Zoom Out, Reset View, Grid Toggle, and Sun/Moon Theme Toggle */}
         <div className={`flex items-center gap-0.5 sm:gap-1 p-0.5 rounded-lg border shrink-0 ${
           theme === 'light'
@@ -225,33 +263,51 @@ export const TopBar: React.FC<TopBarProps> = ({
           />
         </div>
 
-        {/* View Mode Toggle: Breadboard vs Schematic */}
+        {/* View Mode Tabs: Schematic vs Main Circuit vs Main PCB */}
         <div className={`flex items-center p-0.5 rounded-lg border shrink-0 ${
           theme === 'light' ? 'bg-white border-slate-300 shadow-xs' : 'bg-slate-900/90 border-slate-800'
         }`}>
           <button
-            onClick={() => onToggleViewMode('breadboard')}
-            className={`px-2.5 py-1 rounded text-xs font-medium transition cursor-pointer whitespace-nowrap ${
-              viewMode === 'breadboard'
-                ? 'bg-cyan-600/30 text-cyan-400 border border-cyan-500/30 font-bold'
-                : theme === 'light'
-                ? 'text-slate-600 hover:text-slate-900'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Breadboard
-          </button>
-          <button
+            id="view-schematic-btn"
             onClick={() => onToggleViewMode('schematic')}
-            className={`px-2.5 py-1 rounded text-xs font-medium transition cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition cursor-pointer whitespace-nowrap ${
               viewMode === 'schematic'
                 ? 'bg-cyan-600/30 text-cyan-400 border border-cyan-500/30 font-bold'
                 : theme === 'light'
                 ? 'text-slate-600 hover:text-slate-900'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
+            title="Schematic Diagram: Electronic Symbols & Normal Wire Connections"
           >
-            Schematic
+            <span>📐 Schematic</span>
+          </button>
+          <button
+            id="view-breadboard-btn"
+            onClick={() => onToggleViewMode('breadboard')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition cursor-pointer whitespace-nowrap ${
+              viewMode === 'breadboard'
+                ? 'bg-cyan-600/30 text-cyan-400 border border-cyan-500/30 font-bold'
+                : theme === 'light'
+                ? 'text-slate-600 hover:text-slate-900'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="Main Circuit: Original Real Physical Components & Breadboard"
+          >
+            <span>⚡ Main Circuit</span>
+          </button>
+          <button
+            id="view-pcb-btn"
+            onClick={() => onToggleViewMode('pcb')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition cursor-pointer whitespace-nowrap ${
+              viewMode === 'pcb'
+                ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 font-bold'
+                : theme === 'light'
+                ? 'text-slate-600 hover:text-slate-900'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="Main PCB: Top View & Bottom View Design"
+          >
+            <span>🟢 Main PCB</span>
           </button>
         </div>
 

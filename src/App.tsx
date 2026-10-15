@@ -26,6 +26,7 @@ import { Oscilloscope } from './components/instruments/Oscilloscope';
 import { BenchPowerSupply } from './components/instruments/BenchPowerSupply';
 import { FunctionGenerator, FunctionGeneratorOutputState } from './components/instruments/FunctionGenerator';
 import { ProbeTarget } from './components/instruments/MeasurementProbes';
+import { PcbCanvas } from './components/pcb/PcbCanvas';
 
 export default function App() {
   // Project Info
@@ -53,8 +54,9 @@ void loop() {
   const [selectedCompId, setSelectedCompId] = useState<string | null>(null);
   const [selectedWireId, setSelectedWireId] = useState<string | null>(null);
 
-  // Layout & View Modes - Component Library hidden until summoned
-  const [viewMode, setViewMode] = useState<ViewMode>('breadboard');
+  // Layout & View Modes (Schematic Symbols -> Main Circuit Real -> Main PCB)
+  const [viewMode, setViewMode] = useState<ViewMode>('schematic');
+  const [playToast, setPlayToast] = useState<string | null>(null);
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [wireColor, setWireColor] = useState('#06b6d4');
@@ -357,7 +359,7 @@ void loop() {
     runCircuitSolver();
   }, [components, wires, runCircuitSolver]);
 
-  // Simulation controls
+  // Simulation controls - When Play is clicked, auto-generates/switches to Main Circuit (Real Components)
   const handleRun = () => {
     if (mcuRef.current) {
       mcuRef.current.loadProgram(code, language);
@@ -368,6 +370,16 @@ void loop() {
     setIsRunning(true);
     setIsPaused(false);
     runCircuitSolver();
+
+    // Automatic generation & transition to Main Circuit (Real Components) when Play is clicked in Schematic
+    if (viewMode === 'schematic') {
+      setViewMode('breadboard');
+      setPlayToast('⚡ Real Circuit generated from Schematic in Main Circuit! Simulation is running.');
+      setTimeout(() => setPlayToast(null), 4000);
+    } else {
+      setPlayToast('⚡ Circuit Simulation started!');
+      setTimeout(() => setPlayToast(null), 2500);
+    }
   };
 
   const handlePause = () => {
@@ -555,8 +567,8 @@ void loop() {
     }, 250);
   }, [code, language, targetBoardName]);
 
-  // Add Component to canvas
-  const handleAddComponent = (template: ComponentTemplate) => {
+  // Add Component to canvas (can be placed explicitly as Schematic Symbol or Real Component)
+  const handleAddComponent = (template: ComponentTemplate, placeAs?: 'symbol' | 'real') => {
     const newId = `${template.type.replace('mcu-', '')}_${Math.random().toString(36).substring(2, 6)}`;
     const newComponent: CircuitComponent = {
       id: newId,
@@ -565,6 +577,7 @@ void loop() {
       x: 180 + (components.length % 5) * 40,
       y: 120 + (components.length % 5) * 30,
       rotation: 0,
+      renderMode: placeAs || (viewMode === 'schematic' ? 'symbol' : 'real'),
       properties: { ...template.defaultProperties },
     };
 
@@ -674,14 +687,15 @@ void loop() {
     if (selectedCompId === id) setSelectedCompId(null);
   };
 
-  // Add Wire between two pins with optional waypoint routing
+  // Add Wire between two pins with optional waypoint routing and routingType
   const handleAddWire = (
     fromCompId: string,
     fromPinId: string,
     toCompId: string,
     toPinId: string,
     color: string,
-    waypoints?: { x: number; y: number }[]
+    waypoints?: { x: number; y: number }[],
+    routingType?: 'orthogonal' | 'curved'
   ) => {
     // Avoid duplicate direct wire between exact same two pins without custom routing/branching
     const hasWaypoints = waypoints && waypoints.length > 0;
@@ -708,6 +722,7 @@ void loop() {
       toPinId,
       color,
       waypoints: waypoints && waypoints.length > 0 ? waypoints : undefined,
+      routingType: routingType || (viewMode === 'schematic' ? 'orthogonal' : undefined),
     };
 
     setWires((prev) => [...prev, newWire]);
@@ -842,9 +857,17 @@ void loop() {
   };
 
   return (
-    <div className={`flex flex-col h-screen w-screen overflow-hidden font-sans transition-colors duration-200 ${
+    <div className={`flex flex-col h-screen w-screen overflow-hidden font-sans transition-colors duration-200 relative ${
       theme === 'light' ? 'bg-slate-100 text-slate-900' : 'bg-[#070a12] text-slate-100'
     }`}>
+      {/* Toast Notification for Play / Mode transitions */}
+      {playToast && (
+        <div className="fixed top-16 right-4 z-50 bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-bold px-4 py-2.5 rounded-xl shadow-2xl text-xs flex items-center gap-2 border border-emerald-300 animate-in fade-in slide-in-from-top-3">
+          <span className="text-sm">⚡</span>
+          <span>{playToast}</span>
+        </div>
+      )}
+
       {/* Top Navigation Bar */}
       <TopBar
         projectName={projectName}
@@ -888,127 +911,138 @@ void loop() {
 
         {/* Central Workspace: Canvas + Wire Palette + Bottom Code Editor */}
         <div className="flex-1 flex flex-col relative overflow-hidden">
-          {/* Interactive Circuit Canvas */}
-          <CircuitCanvas
-            components={components}
-            wires={wires}
-            selectedCompId={selectedCompId}
-            selectedWireId={selectedWireId}
-            onSelectComponent={(id) => {
-              setSelectedCompId(id);
-              if (id) {
-                setSelectedWireId(null);
-                setIsInspectorOpen(true);
-              } else {
-                setIsInspectorOpen(false);
-              }
-            }}
-            onDoubleClickComponent={(id) => {
-              // Double tap or double click opens properties inspector
-              setSelectedCompId(id);
-              setSelectedWireId(null);
-              setIsInspectorOpen(true);
-            }}
-            onSelectWire={(id) => {
-              setSelectedWireId(id);
-              if (id) setSelectedCompId(null);
-              setIsInspectorOpen(false);
-            }}
-            onMoveComponent={handleMoveComponent}
-            onAddWire={handleAddWire}
-            onUpdateWire={handleUpdateWire}
-            onDeleteWire={handleDeleteWire}
-            onDeleteComponent={handleDeleteComponent}
-            onUpdateProperty={(compId, key, value) => handleUpdateProperties(compId, { [key]: value })}
-            pinStates={pinStates}
-            componentUpdates={componentUpdates}
-            isRunning={isRunning}
-            viewMode={viewMode}
-            wireColor={wireColor}
-            onWireColorChange={handleUpdateWireColor}
-            onOpenLibrary={() => setIsLibraryOpen(true)}
-            onOpenExamples={() => setIsExamplesModalOpen(true)}
-            onOpenProjectManager={() => setIsProjectManagerOpen(true)}
-            onAddDcSupply={handleAddDcSupply}
-            onAddAcSupply={handleAddAcSupply}
-            onOpenBenchSupply={() => setIsBenchSupplyOpen(true)}
-            isBenchSupplyOpen={isBenchSupplyOpen}
-            isMultimeterOpen={isMultimeterOpen}
-            onToggleMultimeter={() => setIsMultimeterOpen((v) => !v)}
-            isOscilloscopeOpen={isOscilloscopeOpen}
-            onToggleOscilloscope={() => setIsOscilloscopeOpen((v) => !v)}
-            isFunctionGeneratorOpen={isFunctionGeneratorOpen}
-            onToggleFunctionGenerator={() => setIsFunctionGeneratorOpen((v) => !v)}
-            multimeterRedProbe={dmmRedProbe}
-            multimeterBlackProbe={dmmBlackProbe}
-            onUpdateMultimeterRedProbe={(p) => { setDmmRedProbe(p); runCircuitSolver(); }}
-            onUpdateMultimeterBlackProbe={(p) => { setDmmBlackProbe(p); runCircuitSolver(); }}
-            multimeterPos={dmmPos}
-            fgRedProbe={fgRedProbe}
-            fgBlackProbe={fgBlackProbe}
-            onUpdateFgRedProbe={(p) => { setFgRedProbe(p); runCircuitSolver(); }}
-            onUpdateFgBlackProbe={(p) => { setFgBlackProbe(p); runCircuitSolver(); }}
-            fgPos={fgPos}
-            oscRedProbe={oscRedProbe}
-            oscBlackProbe={oscBlackProbe}
-            onUpdateOscRedProbe={(p) => { setOscRedProbe(p); runCircuitSolver(); }}
-            onUpdateOscBlackProbe={(p) => { setOscBlackProbe(p); runCircuitSolver(); }}
-            oscPos={oscPos}
-            externalWireStart={externalWireStart}
-            onClearExternalWireStart={() => setExternalWireStart(null)}
-            onWireStartChange={setActiveWiringPin}
-            onLiveWiringChange={setLiveWiringStatus}
-            zoom={zoom}
-            pan={pan}
-            showGrid={showGrid}
-            theme={theme}
-            onZoomChange={setZoom}
-            onPanChange={setPan}
-            onRotateComponent={handleRotate}
-            onRun={handleRun}
-            onPause={handlePause}
-            onStop={handleStop}
-            isPaused={isPaused}
-          />
-
-          {/* Bottom Panel: Wire Connection Assistant (Default / Wiring) or Code Editor (when ESP32, Arduino, Raspberry Pi is selected) */}
-          {bottomPanelMode === 'code' && hasMcuBoard ? (
-            <CodeEditorPanel
-              code={code}
-              onChangeCode={setCode}
-              language={language}
-              onChangeLanguage={setLanguage}
-              serialMessages={serialMessages}
-              onClearSerial={() => setSerialMessages([])}
-              onSendSerial={(text) => mcuRef.current?.injectSerialInput(text)}
-              warnings={warnings}
-              onCompileAndUpload={handleCompileAndUpload}
-              onVerify={handleVerifySketch}
-              onStopSimulation={handleStop}
-              targetBoardName={targetBoardName}
-              isCompiling={isCompiling}
-              isSimulating={isRunning}
-              onAskAI={() => setIsAIModalOpen(true)}
-              onSwitchToWiring={() => setBottomPanelMode('wiring')}
+          {/* Main Display: PCB Canvas (when viewMode === 'pcb') or Circuit Canvas (Schematic Symbols / Real Components) */}
+          {viewMode === 'pcb' ? (
+            <PcbCanvas
+              components={components}
+              wires={wires}
+              projectName={projectName}
+              theme={theme}
             />
           ) : (
-            <WiringAssistantPanel
-              wires={wires}
+            <CircuitCanvas
               components={components}
-              liveWiring={liveWiringStatus}
-              wireColor={wireColor}
-              onChangeWireColor={handleUpdateWireColor}
-              onCancelWire={() => {
-                setActiveWiringPin(null);
-                setExternalWireStart(null);
-                window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+              wires={wires}
+              selectedCompId={selectedCompId}
+              selectedWireId={selectedWireId}
+              onSelectComponent={(id) => {
+                setSelectedCompId(id);
+                if (id) {
+                  setSelectedWireId(null);
+                  setIsInspectorOpen(true);
+                } else {
+                  setIsInspectorOpen(false);
+                }
               }}
+              onDoubleClickComponent={(id) => {
+                // Double tap or double click opens properties inspector
+                setSelectedCompId(id);
+                setSelectedWireId(null);
+                setIsInspectorOpen(true);
+              }}
+              onSelectWire={(id) => {
+                setSelectedWireId(id);
+                if (id) setSelectedCompId(null);
+                setIsInspectorOpen(false);
+              }}
+              onMoveComponent={handleMoveComponent}
+              onAddWire={handleAddWire}
+              onUpdateWire={handleUpdateWire}
               onDeleteWire={handleDeleteWire}
-              onClearWires={() => setWires([])}
-              onSwitchToCodeEditor={() => setBottomPanelMode('code')}
-              hasMcuBoard={hasMcuBoard}
-              targetBoardName={targetBoardName}
+              onDeleteComponent={handleDeleteComponent}
+              onUpdateProperty={(compId, key, value) => handleUpdateProperties(compId, { [key]: value })}
+              pinStates={pinStates}
+              componentUpdates={componentUpdates}
+              isRunning={isRunning}
+              viewMode={viewMode}
+              wireColor={wireColor}
+              onWireColorChange={handleUpdateWireColor}
+              onOpenLibrary={() => setIsLibraryOpen(true)}
+              onOpenExamples={() => setIsExamplesModalOpen(true)}
+              onOpenProjectManager={() => setIsProjectManagerOpen(true)}
+              onAddDcSupply={handleAddDcSupply}
+              onAddAcSupply={handleAddAcSupply}
+              onOpenBenchSupply={() => setIsBenchSupplyOpen(true)}
+              isBenchSupplyOpen={isBenchSupplyOpen}
+              isMultimeterOpen={isMultimeterOpen}
+              onToggleMultimeter={() => setIsMultimeterOpen((v) => !v)}
+              isOscilloscopeOpen={isOscilloscopeOpen}
+              onToggleOscilloscope={() => setIsOscilloscopeOpen((v) => !v)}
+              isFunctionGeneratorOpen={isFunctionGeneratorOpen}
+              onToggleFunctionGenerator={() => setIsFunctionGeneratorOpen((v) => !v)}
+              multimeterRedProbe={dmmRedProbe}
+              multimeterBlackProbe={dmmBlackProbe}
+              onUpdateMultimeterRedProbe={(p) => { setDmmRedProbe(p); runCircuitSolver(); }}
+              onUpdateMultimeterBlackProbe={(p) => { setDmmBlackProbe(p); runCircuitSolver(); }}
+              multimeterPos={dmmPos}
+              fgRedProbe={fgRedProbe}
+              fgBlackProbe={fgBlackProbe}
+              onUpdateFgRedProbe={(p) => { setFgRedProbe(p); runCircuitSolver(); }}
+              onUpdateFgBlackProbe={(p) => { setFgBlackProbe(p); runCircuitSolver(); }}
+              fgPos={fgPos}
+              oscRedProbe={oscRedProbe}
+              oscBlackProbe={oscBlackProbe}
+              onUpdateOscRedProbe={(p) => { setOscRedProbe(p); runCircuitSolver(); }}
+              onUpdateOscBlackProbe={(p) => { setOscBlackProbe(p); runCircuitSolver(); }}
+              oscPos={oscPos}
+              externalWireStart={externalWireStart}
+              onClearExternalWireStart={() => setExternalWireStart(null)}
+              onWireStartChange={setActiveWiringPin}
+              onLiveWiringChange={setLiveWiringStatus}
+              zoom={zoom}
+              pan={pan}
+              showGrid={showGrid}
+              theme={theme}
+              onZoomChange={setZoom}
+              onPanChange={setPan}
+              onRotateComponent={handleRotate}
+              onRun={handleRun}
+              onPause={handlePause}
+              onStop={handleStop}
+              isPaused={isPaused}
             />
+          )}
+
+          {/* Bottom Panel: Wire Connection Assistant or Code Editor (hidden in PCB view) */}
+          {viewMode !== 'pcb' && (
+            bottomPanelMode === 'code' && hasMcuBoard ? (
+              <CodeEditorPanel
+                code={code}
+                onChangeCode={setCode}
+                language={language}
+                onChangeLanguage={setLanguage}
+                serialMessages={serialMessages}
+                onClearSerial={() => setSerialMessages([])}
+                onSendSerial={(text) => mcuRef.current?.injectSerialInput(text)}
+                warnings={warnings}
+                onCompileAndUpload={handleCompileAndUpload}
+                onVerify={handleVerifySketch}
+                onStopSimulation={handleStop}
+                targetBoardName={targetBoardName}
+                isCompiling={isCompiling}
+                isSimulating={isRunning}
+                onAskAI={() => setIsAIModalOpen(true)}
+                onSwitchToWiring={() => setBottomPanelMode('wiring')}
+              />
+            ) : (
+              <WiringAssistantPanel
+                wires={wires}
+                components={components}
+                liveWiring={liveWiringStatus}
+                wireColor={wireColor}
+                onChangeWireColor={handleUpdateWireColor}
+                onCancelWire={() => {
+                  setActiveWiringPin(null);
+                  setExternalWireStart(null);
+                  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+                }}
+                onDeleteWire={handleDeleteWire}
+                onClearWires={() => setWires([])}
+                onSwitchToCodeEditor={() => setBottomPanelMode('code')}
+                hasMcuBoard={hasMcuBoard}
+                targetBoardName={targetBoardName}
+              />
+            )
           )}
         </div>
 

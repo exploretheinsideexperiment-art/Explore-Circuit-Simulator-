@@ -202,8 +202,11 @@ export function evaluateCircuit(
         }
       } else if (comp.type === 'function-generator') {
         const isFgOn = Boolean(comp.properties?.isOn);
+        const fgAmp = Number(comp.properties?.amplitude ?? 5.0);
+        const fgOff = Number(comp.properties?.offset ?? 0);
+        const fgDut = Number(comp.properties?.duty ?? 50);
         if (p.id === 'OUT' || p.type === 'power_vcc') {
-          v = isFgOn ? Number(comp.properties?.amplitude ?? 5.0) : 0;
+          v = isFgOn ? fgAmp / 2 : 0;
           isAc = isFgOn;
           freq = Number(comp.properties?.frequency ?? 1000);
           wave = comp.properties?.waveform ?? 'sine';
@@ -234,6 +237,9 @@ export function evaluateCircuit(
         isAc,
         frequency: freq,
         waveform: wave,
+        amplitude: comp.type === 'function-generator' ? Number(comp.properties?.amplitude ?? 5.0) : undefined,
+        offset: comp.type === 'function-generator' ? Number(comp.properties?.offset ?? 0) : undefined,
+        duty: comp.type === 'function-generator' ? Number(comp.properties?.duty ?? 50) : undefined,
       };
     }
   }
@@ -514,6 +520,14 @@ export function evaluateCircuit(
           hasGnd = true;
         } else if (p.driverType === 'mcu_output') {
           mcuOutputs.push(p);
+          if (p.isAc) {
+            netIsAc = true;
+            netFrequency = p.frequency;
+            netWaveform = p.waveform;
+            netAmplitude = p.amplitude;
+            netOffset = p.offset;
+            netDuty = p.duty;
+          }
         }
       }
 
@@ -575,6 +589,7 @@ export function evaluateCircuit(
         }
       }
 
+      let netPwmDuty: number | undefined = undefined;
       if (hasVcc && !hasGnd && mcuOutputs.length === 0) {
         netSignal = 'POWER_VCC';
       } else if (hasGnd && !hasVcc && mcuOutputs.length === 0) {
@@ -584,17 +599,29 @@ export function evaluateCircuit(
         const driver = mcuOutputs[0];
         netVoltage = driver.voltage;
         netSignal = driver.signalLevel;
+        netPwmDuty = driver.pwmDuty;
+        if (driver.isAc) {
+          netIsAc = true;
+          netFrequency = driver.frequency;
+          netWaveform = driver.waveform;
+          netAmplitude = driver.amplitude;
+          netOffset = driver.offset;
+          netDuty = driver.duty;
+        }
       } else if (!hasVcc && !hasGnd && mcuOutputs.length === 0) {
         netVoltage = 0;
         netSignal = 'FLOATING';
       }
 
-      // Apply net voltage to all non-driving pins in the cluster
+      // Apply net voltage and AC signal parameters to all non-driving pins in the cluster
       for (const pinKey of cluster) {
         const p = currentPinStates[pinKey];
         if (p && !p.isDriven) {
           p.voltage = netVoltage;
           p.signalLevel = netSignal;
+          if (netPwmDuty !== undefined) {
+            p.pwmDuty = netPwmDuty;
+          }
           if (netIsAc) {
             p.isAc = true;
             p.frequency = netFrequency;
@@ -637,10 +664,21 @@ export function evaluateCircuit(
     for (const comp of components) {
       if (comp.type === 'capacitor' || comp.type === 'capacitor-ceramic' || comp.type === 'capacitor-polyester') {
         const isPolarized = comp.type === 'capacitor';
-        const posKey = isPolarized ? makePinKey(comp.id, 'POS') : makePinKey(comp.id, 'PIN1');
-        const negKey = isPolarized ? makePinKey(comp.id, 'NEG') : makePinKey(comp.id, 'PIN2');
-        const pPos = pinStates[posKey];
-        const pNeg = pinStates[negKey];
+        let posKey = isPolarized ? makePinKey(comp.id, 'POS') : makePinKey(comp.id, 'PIN1');
+        let negKey = isPolarized ? makePinKey(comp.id, 'NEG') : makePinKey(comp.id, 'PIN2');
+
+        let pPos = pinStates[posKey];
+        let pNeg = pinStates[negKey];
+
+        // For non-polarized ceramic and polyester capacitors, orient towards highest applied potential
+        if (!isPolarized) {
+          const v1 = pPos?.voltage || 0;
+          const v2 = pNeg?.voltage || 0;
+          if (v2 > v1) {
+            const tmpKey = posKey; posKey = negKey; negKey = tmpKey;
+            const tmpP = pPos; pPos = pNeg; pNeg = tmpP;
+          }
+        }
 
         const now = Date.now();
         const cached = capacitorStateCache.get(comp.id) || {
@@ -655,42 +693,73 @@ export function evaluateCircuit(
 
         const vPos = pPos?.voltage || 0;
         const vNeg = pNeg?.voltage || 0;
-        const isExtPos = Boolean(pPos?.isDriven && pPos.driverType !== 'passive' && pPos.driverType !== 'ground');
-        const isExtNeg = Boolean(pNeg?.isDriven || pNeg?.signalLevel === 'POWER_GND' || pNeg?.driverType === 'ground');
+
+        // Check if an external power source (not this discharging capacitor itself) is actively applying voltage
+        const isPosConnectedToSource = Boolean(
+          (pPos?.isDriven && pPos.driverType !== 'passive' && pPos.driverType !== 'ground' && pPos.compId !== comp.id) ||
+          (pPos?.signalLevel === 'POWER_VCC' && vPos >= 0.5)
+        );
+        const isNegConnectedToGround = Boolean(
+          (pNeg?.isDriven && pNeg.driverType === 'ground' && pNeg.compId !== comp.id) ||
+          pNeg?.signalLevel === 'POWER_GND' ||
+          (vNeg <= 0.2 && (adj[negKey]?.length || 0) > 0)
+        );
+
         const vApplied = Math.max(0, vPos - vNeg);
 
-        if (isExtPos && isExtNeg && vApplied > 0.15) {
-          // Actively charging from external power source with real RC time constant tau = R * C
+        if (isPosConnectedToSource && isNegConnectedToGround && vApplied > 0.15) {
+          // Actively charging from external power source with real RC time constant: tau = R * C
           // If in series with a resistor (e.g. 1kΩ), R is connectedR; otherwise internal source ESR ≈ 2.5Ω
           const rCharge = Math.max(2.5, connectedR > 0 ? connectedR : 2.5);
-          const tauCharge = Math.max(0.02, Math.min(30.0, rCharge * farads * 0.8));
+          const tauCharge = Math.max(0.015, rCharge * farads * 0.9);
           cached.storedVoltage = Math.min(vApplied, vApplied - (vApplied - cached.storedVoltage) * Math.exp(-dt / tauCharge));
-        } else if (cached.storedVoltage > 0.08 && (!isExtPos || vApplied < cached.storedVoltage - 0.15)) {
-          // Only discharge if connected into an actual circuit with closed path
-          const hasConnectedCircuit = Boolean((adj[posKey] && adj[posKey].length > 0) && (adj[negKey] && adj[negKey].length > 0));
-          if (hasConnectedCircuit) {
-            // External power disconnected or lower than stored voltage: CAPACITOR DISCHARGES INTO LOAD!
-            if (pinStates[posKey]) {
-              pinStates[posKey].voltage = Number(cached.storedVoltage.toFixed(2));
-              pinStates[posKey].isDriven = true;
-              pinStates[posKey].driverType = 'power';
-              pinStates[posKey].signalLevel = cached.storedVoltage > 1.2 ? 'POWER_VCC' : 'LOW';
-            }
-            if (pinStates[negKey] && !pinStates[negKey].isDriven) {
-              pinStates[negKey].voltage = 0;
-              pinStates[negKey].isDriven = true;
-              pinStates[negKey].driverType = 'ground';
-              pinStates[negKey].signalLevel = 'POWER_GND';
-            }
-            activeConductionAdded = true;
+        } else if (cached.storedVoltage > 0.05 && (!isPosConnectedToSource || vApplied < cached.storedVoltage - 0.1)) {
+          // External power removed or lower than stored charge: Check if connected in a closed circuit
+          const hasClosedPath = arePinsConnected(posKey, negKey) &&
+            (adj[posKey]?.length || 0) > 0 &&
+            (adj[negKey]?.length || 0) > 0;
 
-            // Realistic discharge decay into connected load: tau = R_load * C
-            // Load resistance is either explicit resistor (e.g. 220Ω, 1kΩ) or standard load path (≈ 250Ω)
-            const rLoad = Math.max(50, connectedR > 0 ? connectedR : 250);
-            // Proportional discharge time: a 10,000µF cap powers an LED for 15s+, a 1000µF for 3-4s, a 100µF for 0.5s, 100nF discharges immediately
-            const tauDischarge = Math.max(0.03, Math.min(60.0, rLoad * (capUf * 1e-6) * 1.5));
-            cached.storedVoltage = Math.max(0, cached.storedVoltage * Math.exp(-dt / tauDischarge));
-            if (cached.storedVoltage < 0.04) cached.storedVoltage = 0;
+          if (hasClosedPath) {
+            // Direct short-circuit between terminals? (e.g. wire directly connecting pos to neg)
+            const isDirectShort = connectedR < 2.0 && (
+              adj[posKey]?.includes(negKey) ||
+              adj[negKey]?.includes(posKey) ||
+              (adj[posKey] || []).some(k => (adj[negKey] || []).includes(k))
+            );
+
+            if (isDirectShort) {
+              // Rapid short-circuit discharge: charge drains instantly with spark
+              cached.storedVoltage = 0;
+            } else {
+              // CAPACITOR DISCHARGES INTO CONNECTED LOAD (LED, resistor, buzzer, motor, etc.)!
+              // Drives pos terminal as an active power source
+              if (pinStates[posKey]) {
+                pinStates[posKey].voltage = Number(cached.storedVoltage.toFixed(2));
+                pinStates[posKey].isDriven = true;
+                pinStates[posKey].driverType = 'power';
+                pinStates[posKey].signalLevel = cached.storedVoltage >= 1.2 ? 'POWER_VCC' : 'LOW';
+              }
+              if (pinStates[negKey] && !pinStates[negKey].isDriven) {
+                pinStates[negKey].voltage = 0;
+                pinStates[negKey].isDriven = true;
+                pinStates[negKey].driverType = 'ground';
+                pinStates[negKey].signalLevel = 'POWER_GND';
+              }
+              activeConductionAdded = true;
+
+              // Physically accurate discharge decay proportional to capacitance rating: tau = R_load * C
+              // Load resistance: either explicit resistor or dynamic load path (e.g. LED/buzzer ≈ 280Ω)
+              const rLoad = Math.max(120, connectedR > 0 ? connectedR : 280);
+              // Discharge duration scales strictly with capacitance:
+              // 10µF: ~0.05s | 100µF: ~0.8s | 470µF: ~3s | 1000µF: ~6s | 4700µF: ~25s | 10000µF: ~50s!
+              const tauDischarge = Math.max(0.02, rLoad * farads * 2.8);
+              cached.storedVoltage = Math.max(0, cached.storedVoltage * Math.exp(-dt / tauDischarge));
+              if (cached.storedVoltage < 0.04) cached.storedVoltage = 0;
+            }
+          } else {
+            // Open circuit (terminals not in a closed loop): REAL CAPACITOR RETAINS STORED CHARGE!
+            // Very slow dielectric self-discharge leakage (< 0.05% per second)
+            cached.storedVoltage = Math.max(0, cached.storedVoltage * (1 - 0.0003 * dt));
           }
         }
 

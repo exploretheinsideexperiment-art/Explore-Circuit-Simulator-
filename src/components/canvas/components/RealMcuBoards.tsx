@@ -159,8 +159,149 @@ export const RealMcuBoard: React.FC<McuBoardProps> = ({ comp, isRunning, pinStat
     );
   }
 
+  // ARDUINO NANO
+  if (boardId === 'arduino-nano' || boardId.includes('nano')) {
+    const isLed13On =
+      (pinStates[`${comp.id}:13`]?.voltage ?? 0) >= 1.5 ||
+      (pinStates[`${comp.id}:D13`]?.voltage ?? 0) >= 1.5;
+
+    return (
+      <div
+        style={{ width: board.width, height: board.height }}
+        className="relative bg-[#005f73] rounded-md shadow-[0_12px_32px_rgba(0,0,0,0.7)] select-none border border-[#0a9396] overflow-hidden font-mono"
+      >
+        <div className="absolute inset-0 bg-gradient-to-b from-[#005f73] via-[#0a9396]/60 to-[#001219]" />
+        
+        {/* Mini-USB Port at Top Edge */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-4 bg-gradient-to-b from-slate-200 to-slate-400 border border-slate-100 rounded-b shadow flex items-center justify-center">
+          <div className="w-5 h-2 bg-slate-900 rounded-xs" />
+        </div>
+
+        {/* ATmega328P TQFP-32 Square IC in Center */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-[#161a1d] border border-slate-700 rounded-xs shadow flex flex-col items-center justify-center -rotate-45">
+          <div className="w-1 h-1 rounded-full bg-slate-500 self-start ml-1 mt-1" />
+          <span className="text-[5px] text-slate-300 font-bold">MEGA</span>
+          <span className="text-[4.5px] text-slate-400">328P</span>
+        </div>
+
+        {/* Reset Tactile Button */}
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-300 border border-slate-100 rounded-xs shadow flex items-center justify-center">
+          <div className="w-2 h-2 rounded-full bg-rose-600" />
+        </div>
+
+        {/* LEDs: PWR, L (Pin 13) */}
+        <div className="absolute top-7 left-1/2 -translate-x-1/2 flex items-center gap-2">
+          <div className="flex flex-col items-center">
+            <div className={`w-1.5 h-1.5 rounded-xs ${isRunning ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]' : 'bg-emerald-950'}`} />
+            <span className="text-[4.5px] text-white">PWR</span>
+          </div>
+          <div className="flex flex-col items-center">
+            <div className={`w-1.5 h-1.5 rounded-xs ${isLed13On ? 'bg-amber-400 shadow-[0_0_6px_#fbbf24]' : 'bg-amber-950'}`} />
+            <span className="text-[4.5px] text-amber-200">L13</span>
+          </div>
+        </div>
+
+        {/* Silkscreen text */}
+        <span className="absolute bottom-1.5 left-1/2 -translate-x-1/2 text-[6px] font-bold text-white tracking-widest">
+          NANO
+        </span>
+
+        {/* Left & Right Header Sockets */}
+        <div className="absolute top-4 bottom-4 left-1 w-2.5 bg-[#0a0d13] border-r border-slate-800 rounded-xs shadow-inner" />
+        <div className="absolute top-4 bottom-4 right-1 w-2.5 bg-[#0a0d13] border-l border-slate-800 rounded-xs shadow-inner" />
+
+        {/* Interactive Pin Contacts */}
+        {board.pins.map((pin) =>
+          renderPin(pin, {
+            left: pin.x - 7,
+            top: pin.y - 7,
+            labelPos: pin.x < board.width / 2 ? 'right' : 'left',
+          })
+        )}
+      </div>
+    );
+  }
+
+  // ESP8266 NODEMCU (ESP-12E)
+  if (boardId.includes('esp8266') || boardId.includes('nodemcu')) {
+    const isLedOn =
+      (pinStates[`${comp.id}:2`]?.voltage ?? 0) >= 1.5 ||
+      (pinStates[`${comp.id}:D4`]?.voltage ?? 0) >= 1.5;
+
+    return (
+      <div
+        style={{ width: board.width, height: board.height }}
+        className="relative bg-[#111317] rounded-lg shadow-[0_12px_32px_rgba(0,0,0,0.7)] select-none border border-slate-700/80 overflow-hidden font-mono"
+      >
+        <div className="absolute inset-0 bg-gradient-to-b from-[#181a20] via-[#111317] to-[#0a0b0d]" />
+        
+        {/* ESP-12E Metal Shield at Top */}
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 w-20 h-22 bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 rounded-sm border border-slate-100 shadow p-1 flex flex-col justify-between">
+          <div className="flex justify-between items-center text-[5.5px] font-bold text-slate-800 border-b border-slate-400/50 pb-0.5">
+            <span>AI-THINKER</span>
+            <span>ESP-12E</span>
+          </div>
+          <div className="text-center">
+            <span className="text-[8px] font-black text-slate-900 tracking-tight">ESP8266</span>
+            <div className="text-[5px] text-slate-600">MOD Wi-Fi</div>
+          </div>
+          <div className="flex justify-between text-[4.5px] text-slate-600 border-t border-slate-400/50 pt-0.5">
+            <span>ISM 2.4GHz</span>
+            <span>PA +25dBm</span>
+          </div>
+        </div>
+
+        {/* Serpentine PCB Antenna */}
+        <div className="absolute top-1 left-1/2 -translate-x-1/2 w-14 h-3 bg-[#0c0e12] border border-[#d4af37]/50 rounded-xs flex items-center justify-around">
+          <div className="w-1 h-2 bg-[#d4af37]" />
+          <div className="w-2 h-2 border-t border-r border-[#d4af37]" />
+          <div className="w-2 h-2 border-t border-l border-[#d4af37]" />
+          <div className="w-1 h-2 bg-[#d4af37]" />
+        </div>
+
+        {/* Micro-USB Port at Bottom */}
+        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-4 bg-gradient-to-t from-slate-300 to-slate-100 border border-slate-200 rounded-t shadow flex items-center justify-center">
+          <div className="w-5 h-2 bg-slate-900 rounded-xs" />
+        </div>
+
+        {/* Flash & Reset buttons */}
+        <div className="absolute bottom-2 left-4 flex flex-col items-center">
+          <div className="w-3 h-3 bg-slate-300 rounded-xs flex items-center justify-center shadow">
+            <div className="w-1.5 h-1.5 rounded-full bg-slate-900" />
+          </div>
+          <span className="text-[5px] text-slate-400 mt-0.5">RST</span>
+        </div>
+        <div className="absolute bottom-2 right-4 flex flex-col items-center">
+          <div className="w-3 h-3 bg-slate-300 rounded-xs flex items-center justify-center shadow">
+            <div className="w-1.5 h-1.5 rounded-full bg-slate-900" />
+          </div>
+          <span className="text-[5px] text-slate-400 mt-0.5">FLASH</span>
+        </div>
+
+        {/* Status LED */}
+        <div className="absolute top-28 left-1/2 -translate-x-1/2 flex items-center gap-2">
+          <div className={`w-2 h-1.5 rounded-xs ${isLedOn ? 'bg-cyan-400 shadow-[0_0_8px_#38bdf8]' : 'bg-cyan-950'}`} />
+          <span className="text-[5px] text-cyan-300 font-bold">LED (D4)</span>
+        </div>
+
+        {/* Left & Right Pin Headers */}
+        <div className="absolute top-5 bottom-4 left-1.5 w-3 bg-[#080a0e] border-r border-slate-800 rounded-xs shadow-inner" />
+        <div className="absolute top-5 bottom-4 right-1.5 w-3 bg-[#080a0e] border-l border-slate-800 rounded-xs shadow-inner" />
+
+        {/* Interactive Pin Contacts */}
+        {board.pins.map((pin) =>
+          renderPin(pin, {
+            left: pin.x - 7,
+            top: pin.y - 7,
+            labelPos: pin.x < board.width / 2 ? 'right' : 'left',
+          })
+        )}
+      </div>
+    );
+  }
+
   // ARDUINO UNO R3
-  if (boardId.includes('arduino')) {
+  if (boardId.includes('arduino') || boardId.includes('uno')) {
     const isLed13On =
       (pinStates[`${comp.id}:13`]?.voltage ?? 0) >= 1.5 ||
       (pinStates[`${comp.id}:D13`]?.voltage ?? 0) >= 1.5;

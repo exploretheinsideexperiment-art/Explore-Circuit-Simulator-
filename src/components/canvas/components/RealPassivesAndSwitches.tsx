@@ -304,24 +304,43 @@ export const RealCeramicCapacitor: React.FC<CompProps> = ({ comp, renderPin }) =
   const code = props.code || (unit === 'nF' && capacitance === 100 ? '104' : `${capacitance}${unit}`);
   const voltageRating = props.voltageRating || '50V';
   const pins = COMPONENT_CATALOG.find((c) => c.type === 'capacitor-ceramic')?.pins || [];
+  const storedVoltage = Number(props.storedVoltage ?? comp.runtimeState?.storedVoltage) || 0;
+  const isDischarging = Boolean(props.isDischarging ?? comp.runtimeState?.isDischarging);
+  const isCharging = Boolean(props.isCharging ?? comp.runtimeState?.isCharging);
+  const storedChargeUc = Number(comp.runtimeState?.storedChargeUc) || 0;
 
   return (
     <div className="relative w-12 h-16 select-none flex flex-col items-center font-mono">
       {/* Disc Body with Burnt Orange / Tan Ceramic Texture */}
-      <div className="relative z-10 w-9 h-9 rounded-full bg-gradient-to-br from-[#d97706] via-[#b45309] to-[#78350f] border border-[#f59e0b]/40 shadow-[0_3px_8px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center p-0.5 overflow-hidden">
+      <div className={`relative z-10 w-9 h-9 rounded-full bg-gradient-to-br from-[#d97706] via-[#b45309] to-[#78350f] border shadow-[0_3px_8px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center p-0.5 overflow-hidden transition-all ${
+        isCharging ? 'border-amber-300 ring-2 ring-amber-400/50 shadow-[0_0_10px_rgba(245,158,11,0.5)]' :
+        isDischarging ? 'border-yellow-300 ring-2 ring-yellow-400/50 shadow-[0_0_10px_rgba(234,179,8,0.5)]' :
+        storedVoltage > 0.5 ? 'border-amber-400/80 shadow-[0_0_8px_rgba(245,158,11,0.3)]' : 'border-[#f59e0b]/40'
+      }`}>
         {/* Curved Specular Glaze Reflection */}
         <div className="absolute top-1 inset-x-2 h-1.5 bg-white/20 rounded-full blur-[0.5px] pointer-events-none" />
 
-        {/* Laser-Etched 3-digit Code (e.g. 104, 103, 22) */}
-        <div className="text-[8px] font-black text-amber-100 tracking-tight leading-none drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
+        {/* Laser-Etched 3-digit Code & Live Charge */}
+        <div className="text-[7.5px] font-black text-amber-100 tracking-tight leading-none drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
           {code}
         </div>
-        <div className="text-[5.5px] font-bold text-amber-200/80 leading-none mt-0.5">
-          {voltageRating}
-        </div>
-        <div className="text-[4.5px] text-amber-300/60 leading-none">
-          CERAMIC
-        </div>
+        {storedVoltage > 0.15 ? (
+          <div className="text-[5px] font-black text-yellow-200 leading-none mt-0.5 drop-shadow">
+            {storedVoltage.toFixed(1)}V {isDischarging ? '🔻' : isCharging ? '⚡' : '🔋'}
+            <div className="text-[4px] text-amber-200 font-mono">
+              {storedChargeUc >= 0.1 ? `${storedChargeUc.toFixed(0)}µC` : `${capacitance}${unit}`}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="text-[5px] font-bold text-amber-200/80 leading-none mt-0.5">
+              {voltageRating}
+            </div>
+            <div className="text-[4px] text-amber-300/60 leading-none">
+              {capacitance}{unit}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Kinked / Crimp Radial Leads */}
@@ -361,24 +380,43 @@ export const RealPolyesterCapacitor: React.FC<CompProps> = ({ comp, renderPin })
   const code = props.code || (unit === 'nF' && capacitance === 100 ? '2A104J' : `${capacitance}${unit}`);
   const voltageRating = props.voltageRating || '100V';
   const pins = COMPONENT_CATALOG.find((c) => c.type === 'capacitor-polyester')?.pins || [];
+  const storedVoltage = Number(props.storedVoltage ?? comp.runtimeState?.storedVoltage) || 0;
+  const isDischarging = Boolean(props.isDischarging ?? comp.runtimeState?.isDischarging);
+  const isCharging = Boolean(props.isCharging ?? comp.runtimeState?.isCharging);
+  const storedChargeUc = Number(comp.runtimeState?.storedChargeUc) || 0;
 
   return (
     <div className="relative w-14 h-16 select-none flex flex-col items-center font-mono">
       {/* Molded Epoxy Green Drop / Box Body */}
-      <div className="relative z-10 w-11 h-8 rounded-lg bg-gradient-to-b from-[#15803d] via-[#166534] to-[#14532d] border border-[#22c55e]/50 shadow-[0_4px_10px_rgba(0,0,0,0.6)] flex flex-col items-center justify-center p-1 overflow-hidden">
+      <div className={`relative z-10 w-11 h-8 rounded-lg bg-gradient-to-b from-[#15803d] via-[#166534] to-[#14532d] border shadow-[0_4px_10px_rgba(0,0,0,0.6)] flex flex-col items-center justify-center p-1 overflow-hidden transition-all ${
+        isCharging ? 'border-emerald-300 ring-2 ring-emerald-400/50 shadow-[0_0_10px_rgba(34,197,94,0.5)]' :
+        isDischarging ? 'border-amber-300 ring-2 ring-amber-400/50 shadow-[0_0_10px_rgba(245,158,11,0.5)]' :
+        storedVoltage > 0.5 ? 'border-emerald-400/80 shadow-[0_0_8px_rgba(34,197,94,0.3)]' : 'border-[#22c55e]/50'
+      }`}>
         {/* Rounded Top Specular Gloss Arc */}
         <div className="absolute top-0.5 inset-x-2 h-1 bg-white/25 rounded-full pointer-events-none" />
 
-        {/* Silkscreen Markings (e.g. 2A104J 100V) */}
+        {/* Silkscreen Markings & Live Charge */}
         <div className="text-[7.5px] font-black text-emerald-100 tracking-tight leading-none drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
           {code}
         </div>
-        <div className="text-[5.5px] font-bold text-emerald-300 leading-none mt-0.5">
-          {voltageRating} MYLAR
-        </div>
-        <div className="text-[5px] text-emerald-400/80 leading-none mt-0.5 font-bold">
-          {capacitance}{unit}
-        </div>
+        {storedVoltage > 0.15 ? (
+          <div className="text-[5px] font-black text-emerald-200 leading-none mt-0.5 drop-shadow">
+            {storedVoltage.toFixed(1)}V {isDischarging ? '🔻' : isCharging ? '⚡' : '🔋'}
+            <div className="text-[4px] text-emerald-300 font-mono">
+              {storedChargeUc >= 0.1 ? `${storedChargeUc.toFixed(0)}µC` : `${capacitance}${unit}`}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="text-[5px] font-bold text-emerald-300 leading-none mt-0.5">
+              {voltageRating} MYLAR
+            </div>
+            <div className="text-[4.5px] text-emerald-400/80 leading-none mt-0.5 font-bold">
+              {capacitance}{unit}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Parallel Tinned Copper Lead Wires */}
@@ -935,3 +973,106 @@ export const RealTransformer: React.FC<CompProps> = ({ comp, renderPin }) => {
     </div>
   );
 };
+
+// ==========================================
+// REAL 9V PP3 ALKALINE BATTERY
+// ==========================================
+export const Real9vBattery: React.FC<CompProps> = ({ comp, renderPin }) => {
+  const templatePins = COMPONENT_CATALOG.find((c) => c.type === 'battery-9v')?.pins;
+  const batteryPins: PinDef[] = templatePins || [
+    { id: 'POS', name: '+9V (Red)', label: '+', type: 'power_vcc', x: 20, y: 12, voltage: 9.0 },
+    { id: 'NEG', name: 'GND (Black)', label: '-', type: 'power_gnd', x: 40, y: 12, voltage: 0 },
+  ];
+
+  return (
+    <div className="relative w-[60px] h-[84px] select-none group">
+      {/* Battery Casing (Metallic Navy Blue & Gold Top) */}
+      <div className="w-full h-full rounded-md bg-gradient-to-b from-[#1e293b] via-[#0f172a] to-[#020617] border border-amber-500/40 shadow-xl overflow-hidden flex flex-col justify-between p-1 relative">
+        {/* Gold top band */}
+        <div className="w-full h-4 bg-gradient-to-r from-amber-600 via-amber-400 to-amber-600 rounded-t flex items-center justify-between px-1 text-[8px] font-black text-black">
+          <span>+</span>
+          <span className="font-mono text-[7px]">9V</span>
+          <span>-</span>
+        </div>
+
+        {/* Brand Body */}
+        <div className="flex-1 flex flex-col items-center justify-center py-1">
+          <span className="text-[12px] font-black tracking-widest text-amber-400 drop-shadow-sm font-sans">
+            9V
+          </span>
+          <span className="text-[7px] font-bold text-slate-300 uppercase tracking-tighter">
+            ALKALINE
+          </span>
+          <span className="text-[6px] font-mono text-slate-400 mt-1">
+            6F22 / PP3
+          </span>
+        </div>
+
+        {/* Bottom base metal stripe */}
+        <div className="w-full h-2 bg-gradient-to-r from-slate-600 via-slate-400 to-slate-600 rounded-b" />
+      </div>
+
+      {/* Snap Terminals on Top */}
+      {/* Positive snap (Small circular stud) */}
+      <div className="absolute left-[14px] -top-2 w-3.5 h-3 bg-gradient-to-b from-slate-300 to-slate-500 rounded-full border border-slate-600 shadow flex items-center justify-center pointer-events-none">
+        <span className="text-[6px] font-bold text-red-600">+</span>
+      </div>
+      {/* Negative snap (Large hexagonal socket) */}
+      <div className="absolute right-[14px] -top-2.5 w-4 h-3.5 bg-gradient-to-b from-slate-300 to-slate-500 rounded border border-slate-600 shadow flex items-center justify-center pointer-events-none">
+        <span className="text-[6px] font-bold text-blue-600">-</span>
+      </div>
+
+      {/* Pins */}
+      {batteryPins.map((pin: PinDef) =>
+        renderPin(pin, {
+          left: pin.x - 7,
+          top: pin.y - 7,
+          labelPos: 'top',
+          customLabel: pin.label,
+        })
+      )}
+    </div>
+  );
+};
+
+// ==========================================
+// REAL NTC DISC THERMISTOR
+// ==========================================
+export const RealThermistor: React.FC<CompProps> = ({ comp, renderPin }) => {
+  const templatePins = COMPONENT_CATALOG.find((c) => c.type === 'sensor-thermistor')?.pins;
+  const thermistorPins: PinDef[] = templatePins || [
+    { id: 'PIN1', name: 'Pin 1', type: 'passive', x: 14, y: 48 },
+    { id: 'PIN2', name: 'Pin 2', type: 'passive', x: 31, y: 48 },
+  ];
+
+  return (
+    <div className="relative w-[45px] h-[55px] select-none flex flex-col items-center">
+      {/* Ceramic Disc Head (Glossy Forest Green) */}
+      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 via-emerald-700 to-teal-950 border-2 border-emerald-900 shadow-lg flex flex-col items-center justify-center relative">
+        <span className="text-[6px] font-bold text-emerald-200 font-mono tracking-tighter">
+          NTC
+        </span>
+        <span className="text-[5.5px] font-mono text-emerald-300">
+          10D-9
+        </span>
+      </div>
+
+      {/* Radial Wire Leads */}
+      <div className="w-5 flex justify-between h-5">
+        <div className="w-0.5 h-full bg-slate-400 shadow-sm" />
+        <div className="w-0.5 h-full bg-slate-400 shadow-sm" />
+      </div>
+
+      {/* Interactive Pins */}
+      {thermistorPins.map((pin: PinDef) =>
+        renderPin(pin, {
+          left: pin.x - 7,
+          top: pin.y - 7,
+          labelPos: 'bottom',
+          customLabel: pin.id === 'PIN1' ? '1' : '2',
+        })
+      )}
+    </div>
+  );
+};
+
