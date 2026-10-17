@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Play, Pause, Square, RotateCcw, 
   FolderOpen, Save, Download, Upload, Cpu, 
   Sparkles, Layers, FileCode, CheckCircle2, AlertTriangle, ShieldCheck,
-  Plus, Box, ZoomIn, ZoomOut, Maximize2, Grid, Sun, Moon
+  Plus, Box, ZoomIn, ZoomOut, Maximize2, Grid, Sun, Moon, RefreshCw
 } from 'lucide-react';
 import { ViewMode } from '../../types';
 import { PWAInstallButton } from '../pwa/PWAInstallButton';
@@ -37,6 +37,7 @@ interface TopBarProps {
   onToggleGrid?: () => void;
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
+  onOpenUpdateModal?: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -68,6 +69,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleGrid,
   theme = 'dark',
   onToggleTheme,
+  onOpenUpdateModal,
 }) => {
   return (
     <header className={`h-14 border-b px-2 sm:px-4 flex items-center select-none z-30 shrink-0 gap-2 sm:gap-3 relative overflow-hidden transition-colors duration-200 ${
@@ -396,6 +398,22 @@ export const TopBar: React.FC<TopBarProps> = ({
           <Sparkles className="w-3.5 h-3.5 text-purple-400 animate-spin-slow" />
           <span className="font-mono">Explore AI</span>
         </button>
+
+        {/* Update & GitHub Sync Button */}
+        {onOpenUpdateModal && (
+          <button
+            onClick={onOpenUpdateModal}
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs font-medium transition shadow-sm active:scale-95 shrink-0 whitespace-nowrap cursor-pointer ${
+              theme === 'light'
+                ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700'
+                : 'bg-cyan-950/50 hover:bg-cyan-900/60 border-cyan-800/60 text-cyan-300 hover:text-white'
+            }`}
+            title="Check for Updates & GitHub Repository Sync / अपडेट जांचें"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="font-mono text-[11px] hidden md:inline">Check Update</span>
+          </button>
+        )}
 
         {/* PWA Install Button */}
         <div className="shrink-0">

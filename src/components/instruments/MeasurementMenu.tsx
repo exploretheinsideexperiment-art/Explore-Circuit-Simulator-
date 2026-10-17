@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, Gauge, ChevronDown, Check, Zap, Sliders, Waves, Radio } from 'lucide-react';
+import { Activity, Gauge, ChevronDown, Check, Zap, Sliders, Waves, Radio, Calculator } from 'lucide-react';
 
 interface MeasurementMenuProps {
   isMultimeterOpen: boolean;
@@ -9,6 +9,8 @@ interface MeasurementMenuProps {
   onToggleOscilloscope: () => void;
   isFunctionGeneratorOpen: boolean;
   onToggleFunctionGenerator: () => void;
+  isCalculatorOpen?: boolean;
+  onToggleCalculator?: () => void;
   dropUp?: boolean;
 }
 
@@ -19,6 +21,8 @@ export const MeasurementMenu: React.FC<MeasurementMenuProps> = ({
   onToggleOscilloscope,
   isFunctionGeneratorOpen,
   onToggleFunctionGenerator,
+  isCalculatorOpen = false,
+  onToggleCalculator,
   dropUp = true,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -68,7 +72,7 @@ export const MeasurementMenu: React.FC<MeasurementMenuProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const activeCount = (isMultimeterOpen ? 1 : 0) + (isOscilloscopeOpen ? 1 : 0) + (isFunctionGeneratorOpen ? 1 : 0);
+  const activeCount = (isMultimeterOpen ? 1 : 0) + (isOscilloscopeOpen ? 1 : 0) + (isFunctionGeneratorOpen ? 1 : 0) + (isCalculatorOpen ? 1 : 0);
 
   return (
     <div className="relative z-30 shrink-0">
@@ -202,6 +206,36 @@ export const MeasurementMenu: React.FC<MeasurementMenuProps> = ({
               </div>
               <p className="text-[11px] text-slate-400 leading-tight mt-0.5">
                 Dual-channel waveform capture, Time/Div, Volts/Div, Vpp, & Edge Trigger.
+              </p>
+            </div>
+          </button>
+
+          {/* Electronic Calculator & Auto-Analyzer Option */}
+          <button
+            onClick={() => {
+              onToggleCalculator?.();
+              setIsOpen(false);
+            }}
+            className={`w-full text-left p-2 rounded-lg border transition-all flex items-start gap-2.5 cursor-pointer ${
+              isCalculatorOpen
+                ? 'bg-purple-950/40 border-purple-500/50 text-purple-200'
+                : 'bg-slate-900/60 hover:bg-slate-800/80 border-slate-800 text-slate-300'
+            }`}
+          >
+            <div className={`p-2 rounded-lg mt-0.5 ${isCalculatorOpen ? 'bg-purple-500 text-slate-950' : 'bg-slate-800 text-purple-400'}`}>
+              <Calculator className="w-4 h-4" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white">Electronic Calculator</span>
+                <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${
+                  isCalculatorOpen ? 'bg-purple-500 text-slate-950' : 'bg-slate-800 text-slate-400'
+                }`}>
+                  {isCalculatorOpen ? 'ACTIVE' : 'OFF'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-tight mt-0.5">
+                Auto-calculates Ohm's Law, Power, Divider, Filter Cutoff, & live dynamic graphs.
               </p>
             </div>
           </button>

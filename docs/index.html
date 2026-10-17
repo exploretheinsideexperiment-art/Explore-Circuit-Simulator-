@@ -18,6 +18,63 @@
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <script>
       (function() {
+        // Intercept Vite client WebSocket connection in AI Studio iframe to prevent uncaught transport errors
+        try {
+          var OrigWebSocket = window.WebSocket;
+          if (OrigWebSocket) {
+            window.WebSocket = function(url, protocols) {
+              try {
+                var ws = protocols !== undefined ? new OrigWebSocket(url, protocols) : new OrigWebSocket(url);
+                ws.addEventListener('error', function(e) {
+                  if (e && typeof e.stopImmediatePropagation === 'function') {
+                    e.stopImmediatePropagation();
+                  }
+                });
+                return ws;
+              } catch (err) {
+                return {
+                  addEventListener: function() {},
+                  removeEventListener: function() {},
+                  send: function() {},
+                  close: function() {},
+                  readyState: 3,
+                };
+              }
+            };
+            window.WebSocket.prototype = OrigWebSocket.prototype;
+            window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
+            window.WebSocket.OPEN = OrigWebSocket.OPEN;
+            window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
+            window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
+          }
+        } catch (_) {}
+
+        window.addEventListener('error', function(e) {
+          var msg = (e && (e.message || (e.error && e.error.message))) || '';
+          var fn = (e && e.filename) || '';
+          if (
+            fn.indexOf('@vite/client') !== -1 ||
+            msg.indexOf('WebSocket') !== -1 ||
+            msg.indexOf('createWebSocketModuleRunnerTransport') !== -1
+          ) {
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            if (e.preventDefault) e.preventDefault();
+            return true;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(e) {
+          var r = String((e && e.reason) || '');
+          if (
+            r.indexOf('WebSocket') !== -1 ||
+            r.indexOf('@vite/client') !== -1 ||
+            r.indexOf('createWebSocketModuleRunnerTransport') !== -1
+          ) {
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            if (e.preventDefault) e.preventDefault();
+          }
+        }, true);
+
         var h = window.location.hostname;
         var p = window.location.pathname;
         if (h.endsWith('github.io') && !p.includes('/docs')) {
@@ -26,8 +83,8 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="./assets/index-B4NEnt75.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Csncrf8H.css">
+    <script type="module" crossorigin src="./assets/index-U9rw_SsJ.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DqWldrHf.css">
   <link rel="manifest" href="./manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="./registerSW.js"></script></head>
   <body class="bg-[#090d16] text-slate-100 antialiased overflow-hidden select-none">
     <div id="root"></div>

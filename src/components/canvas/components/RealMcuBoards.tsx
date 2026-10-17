@@ -10,7 +10,13 @@ interface McuBoardProps {
 }
 
 export const RealMcuBoard: React.FC<McuBoardProps> = ({ comp, isRunning, pinStates, renderPin }) => {
-  const boardId = comp.properties?.boardId || 'esp32-devkit-v1';
+  const rawBoardId = comp.properties?.boardId || (comp.type.startsWith('mcu-') ? comp.type.replace('mcu-', '') : '') || 'arduino-uno';
+  const boardId = SUPPORTED_BOARDS[rawBoardId] ? rawBoardId :
+    rawBoardId.includes('uno') ? 'arduino-uno' :
+    rawBoardId.includes('nano') ? 'arduino-nano' :
+    rawBoardId.includes('esp8266') || rawBoardId.includes('nodemcu') ? 'esp8266-nodemcu' :
+    rawBoardId.includes('pico') ? 'raspberry-pi-pico' :
+    rawBoardId.includes('esp32') ? 'esp32-devkit-v1' : 'arduino-uno';
   const board = SUPPORTED_BOARDS[boardId];
   if (!board) return null;
 
@@ -59,24 +65,46 @@ export const RealMcuBoard: React.FC<McuBoardProps> = ({ comp, isRunning, pinStat
           </span>
         </div>
 
-        {/* --- Metal RF Shield: ESP-WROOM-32 --- */}
-        <div className="absolute top-9 left-1/2 -translate-x-1/2 w-24 h-24 bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 rounded-sm border border-slate-100 shadow-[0_2px_8px_rgba(0,0,0,0.5)] p-1.5 flex flex-col justify-between">
-          <div className="flex items-center justify-between border-b border-slate-400/50 pb-0.5">
+        {/* --- Metal RF Shield: SSPREASIF ZSP32-WROOM-32U with QR Code & CE mark --- */}
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 w-25 h-25 bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 rounded-sm border border-slate-100 shadow-[0_2px_10px_rgba(0,0,0,0.6)] p-1.5 flex flex-col justify-between">
+          <div className="flex items-center justify-between border-b border-slate-400/60 pb-0.5">
             <div className="flex items-center gap-1">
-              <div className="w-2 h-2 rounded-xs bg-slate-800 flex items-center justify-center text-[5px] text-white font-black">E</div>
-              <span className="text-[8px] font-black text-slate-900 tracking-tight">Espressif</span>
+              <span className="text-[7.5px] font-black text-slate-900 tracking-tight">SSPREASIF</span>
             </div>
-            <span className="text-[6px] font-bold text-slate-700">WROOM-32</span>
+            {/* Gold U.FL / J39 IPEX Coaxial Antenna Jack */}
+            <div className="w-3 h-3 rounded-full border border-amber-500 bg-amber-400/80 flex items-center justify-center">
+              <div className="w-1 h-1 rounded-full bg-slate-900" />
+            </div>
           </div>
 
-          <div className="my-auto flex flex-col items-center text-center">
-            <span className="text-[10px] font-black text-slate-900 tracking-tighter leading-none">ESP32</span>
-            <span className="text-[6.5px] font-semibold text-slate-700 mt-0.5">Dual-Core 240MHz</span>
+          <div className="my-auto flex items-center justify-between px-0.5">
+            <div className="flex flex-col text-left">
+              <span className="text-[8px] font-black text-slate-900 tracking-tight leading-tight">
+                ZSP32-WROOM-32U
+              </span>
+              <div className="flex items-center gap-1 mt-0.5">
+                <span className="text-[5px] font-bold bg-slate-800 text-white px-0.8 py-0.2 rounded-xs">Wi Fi</span>
+                <span className="text-[5.5px] font-bold text-slate-800">CE</span>
+              </div>
+            </div>
+
+            {/* Micro QR Code Pattern */}
+            <div className="w-6 h-6 bg-slate-900 p-0.5 grid grid-cols-3 gap-0.5 rounded-xs shrink-0">
+              <div className="bg-slate-100" />
+              <div className="bg-slate-900" />
+              <div className="bg-slate-100" />
+              <div className="bg-slate-900" />
+              <div className="bg-slate-100" />
+              <div className="bg-slate-900" />
+              <div className="bg-slate-100" />
+              <div className="bg-slate-100" />
+              <div className="bg-slate-100" />
+            </div>
           </div>
 
-          <div className="flex items-center justify-between text-[5.5px] text-slate-700 font-semibold border-t border-slate-400/40 pt-0.5">
-            <span>FCC ID: 2AC7Z</span>
-            <span>CE 0700</span>
+          <div className="flex items-center justify-between text-[5px] text-slate-700 font-mono font-semibold border-t border-slate-400/50 pt-0.5">
+            <span>2AC77-ESF12WROOM32U</span>
+            <span>SI I-LJI</span>
           </div>
         </div>
 
@@ -398,15 +426,26 @@ export const RealMcuBoard: React.FC<McuBoardProps> = ({ comp, isRunning, pinStat
           </div>
         </div>
 
-        {/* Arduino Silkscreen Branding */}
-        <div className="absolute bottom-6 left-28 flex flex-col">
-          <div className="flex items-center gap-1">
-            <span className="text-sm font-black text-white tracking-widest">ARDUINO</span>
-            <div className="w-4 h-3 bg-white rounded-full flex items-center justify-center text-[7px] text-[#00878f] font-black">
+        {/* Arduino Silkscreen Branding matching genuine Uno R3 */}
+        <div className="absolute bottom-5 left-26 flex flex-col">
+          <div className="flex items-center gap-1.5">
+            {/* Italian Flag Badge */}
+            <div className="flex w-3.5 h-3 rounded-xs overflow-hidden border border-slate-900/40 shadow-xs">
+              <div className="w-1/3 h-full bg-[#009246]" />
+              <div className="w-1/3 h-full bg-white" />
+              <div className="w-1/3 h-full bg-[#ce2b37]" />
+            </div>
+            {/* Infinity Logo with ARDUINO */}
+            <div className="w-4 h-3 bg-white rounded-full flex items-center justify-center text-[7px] text-[#00878f] font-black shadow-xs">
               ∞
             </div>
+            <span className="text-[12px] font-black text-white tracking-widest font-mono">ARDUINO</span>
           </div>
-          <span className="text-[9px] font-bold text-[#b5e3e6] -mt-1 tracking-wider">UNO R3</span>
+
+          {/* Genuine White Box UNO R3 Label */}
+          <div className="mt-0.5 bg-white text-slate-950 font-black text-[9px] px-1.5 py-0.2 rounded-xs inline-block tracking-wider border border-slate-300 w-max shadow-xs">
+            UNO R3
+          </div>
         </div>
 
         {/* Top Header Rail Background (Black female header bar) */}

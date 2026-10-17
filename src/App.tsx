@@ -23,10 +23,12 @@ import { ExamplesModal } from './components/modals/ExamplesModal';
 import { ProjectManagerModal } from './components/modals/ProjectManagerModal';
 import { DigitalMultimeter } from './components/instruments/DigitalMultimeter';
 import { Oscilloscope } from './components/instruments/Oscilloscope';
+import { ElectronicCalculator } from './components/instruments/ElectronicCalculator';
 import { BenchPowerSupply } from './components/instruments/BenchPowerSupply';
 import { FunctionGenerator, FunctionGeneratorOutputState } from './components/instruments/FunctionGenerator';
 import { ProbeTarget } from './components/instruments/MeasurementProbes';
 import { PcbCanvas } from './components/pcb/PcbCanvas';
+import { UpdatePrompt } from './components/pwa/UpdatePrompt';
 
 export default function App() {
   // Project Info
@@ -107,7 +109,9 @@ void loop() {
   const [isMultimeterOpen, setIsMultimeterOpen] = useState(false);
   const [isOscilloscopeOpen, setIsOscilloscopeOpen] = useState(false);
   const [isFunctionGeneratorOpen, setIsFunctionGeneratorOpen] = useState(false);
+  const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [isBenchSupplyOpen, setIsBenchSupplyOpen] = useState(false);
+  const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [externalWireStart, setExternalWireStart] = useState<{ compId: string; pinId: string; color?: string } | null>(null);
   const [activeWiringPin, setActiveWiringPin] = useState<{ compId: string; pinId: string } | null>(null);
 
@@ -898,6 +902,7 @@ void loop() {
         onToggleGrid={handleToggleGrid}
         theme={theme}
         onToggleTheme={handleToggleTheme}
+        onOpenUpdateModal={() => setIsUpdateModalOpen(true)}
       />
 
       {/* Main Studio Workspace */}
@@ -970,6 +975,8 @@ void loop() {
               onToggleOscilloscope={() => setIsOscilloscopeOpen((v) => !v)}
               isFunctionGeneratorOpen={isFunctionGeneratorOpen}
               onToggleFunctionGenerator={() => setIsFunctionGeneratorOpen((v) => !v)}
+              isCalculatorOpen={isCalculatorOpen}
+              onToggleCalculator={() => setIsCalculatorOpen((v) => !v)}
               multimeterRedProbe={dmmRedProbe}
               multimeterBlackProbe={dmmBlackProbe}
               onUpdateMultimeterRedProbe={(p) => { setDmmRedProbe(p); runCircuitSolver(); }}
@@ -1146,6 +1153,17 @@ void loop() {
         onPositionChange={setOscPos}
       />
 
+      <ElectronicCalculator
+        isOpen={isCalculatorOpen}
+        onClose={() => setIsCalculatorOpen(false)}
+        components={components}
+        wires={wires}
+        pinStates={pinStates}
+        isRunning={isRunning}
+        selectedComponent={selectedComponent}
+        onSelectComponent={(comp) => setSelectedCompId(comp.id)}
+      />
+
       {isBenchSupplyOpen && (
         <BenchPowerSupply
           isOpen={isBenchSupplyOpen}
@@ -1163,6 +1181,13 @@ void loop() {
           activeWiringPin={activeWiringPin}
         />
       )}
+
+      {/* Live GitHub & PWA Update Notification Modal */}
+      <UpdatePrompt
+        theme={theme}
+        isOpen={isUpdateModalOpen}
+        onClose={() => setIsUpdateModalOpen(false)}
+      />
     </div>
   );
 }

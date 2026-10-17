@@ -98,6 +98,8 @@ interface CircuitCanvasProps {
   onToggleOscilloscope: () => void;
   isFunctionGeneratorOpen?: boolean;
   onToggleFunctionGenerator?: () => void;
+  isCalculatorOpen?: boolean;
+  onToggleCalculator?: () => void;
   multimeterRedProbe?: ProbeTarget | null;
   multimeterBlackProbe?: ProbeTarget | null;
   onUpdateMultimeterRedProbe?: (probe: ProbeTarget | null) => void;
@@ -163,6 +165,8 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
   onToggleOscilloscope,
   isFunctionGeneratorOpen = false,
   onToggleFunctionGenerator = () => {},
+  isCalculatorOpen = false,
+  onToggleCalculator = () => {},
   multimeterRedProbe,
   multimeterBlackProbe,
   onUpdateMultimeterRedProbe,
@@ -317,7 +321,19 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       comp.type.includes('diode') || comp.type.includes('led') ? 130 :
       comp.type.includes('transistor') || comp.type.includes('mosfet') ? 110 :
       comp.type.includes('opamp') ? 160 :
-      comp.type.startsWith('mcu-') ? 280 :
+      comp.type.includes('esp32') ? 360 :
+      comp.type.startsWith('mcu-') ? 320 :
+      comp.type.includes('relay') ? 160 :
+      comp.type.includes('hcsr04') || comp.type.includes('ultrasonic') ? 150 :
+      comp.type.includes('dht') ? 140 :
+      comp.type.includes('pir') ? 140 :
+      comp.type.includes('servo') ? 140 :
+      comp.type.includes('motor-dc') ? 130 :
+      comp.type.includes('oled') ? 160 :
+      comp.type.includes('lcd') ? 160 :
+      comp.type.includes('buzzer') ? 130 :
+      comp.type.includes('power-distribution-bus') ? 170 :
+      comp.type.includes('terminal-block') ? 160 :
       getComponentDimensions(comp).width
     ) : getComponentDimensions(comp).width;
 
@@ -332,7 +348,19 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
       comp.type.includes('diode') || comp.type.includes('led') ? 60 :
       comp.type.includes('transistor') || comp.type.includes('mosfet') ? 100 :
       comp.type.includes('opamp') ? 120 :
-      comp.type.startsWith('mcu-') ? 230 :
+      comp.type.includes('esp32') ? 420 :
+      comp.type.startsWith('mcu-') ? 320 :
+      comp.type.includes('relay') ? 90 :
+      comp.type.includes('hcsr04') || comp.type.includes('ultrasonic') ? 80 :
+      comp.type.includes('dht') ? 80 :
+      comp.type.includes('pir') ? 75 :
+      comp.type.includes('servo') ? 75 :
+      comp.type.includes('motor-dc') ? 70 :
+      comp.type.includes('oled') ? 85 :
+      comp.type.includes('lcd') ? 85 :
+      comp.type.includes('buzzer') ? 65 :
+      comp.type.includes('power-distribution-bus') ? 80 :
+      comp.type.includes('terminal-block') ? 95 :
       getComponentDimensions(comp).height
     ) : getComponentDimensions(comp).height;
 
@@ -352,8 +380,8 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
         if (pId === 'PIN1' || pId === '1') { px = 15; py = 32; }
         else if (pId === 'PIN2' || pId === '2') { px = 125; py = 32; }
       } else if (comp.type.includes('capacitor')) {
-        if (pId === 'POS' || pId === 'PIN1' || pId === '+') { px = 15; py = 30; }
-        else if (pId === 'NEG' || pId === 'PIN2' || pId === '-') { px = 115; py = 30; }
+        if (['POS', 'PIN1', 'PIN_1', '+', '1'].includes(pId)) { px = 15; py = 30; }
+        else if (['NEG', 'PIN2', 'PIN_2', '-', '2'].includes(pId)) { px = 115; py = 30; }
       } else if (comp.type === 'inductor') {
         if (pId === 'PIN1' || pId === '1') { px = 15; py = 28; }
         else if (pId === 'PIN2' || pId === '2') { px = 125; py = 28; }
@@ -365,25 +393,160 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
         else if (pId === 'PIN2' || pId === '2') { px = 125; py = 45; }
         else if (pId === 'WIPER' || pId === 'W') { px = 70; py = 9; }
       } else if (comp.type.includes('diode') || comp.type.includes('led')) {
-        if (pId === 'ANODE' || pId === 'A' || pId === 'POS' || pId === '+') { px = 15; py = 30; }
-        else if (pId === 'CATHODE' || pId === 'K' || pId === 'NEG' || pId === '-') { px = 115; py = 30; }
+        if (['ANODE', 'A', 'POS', '+', '1', 'PIN1'].includes(pId)) { px = 15; py = 30; }
+        else if (['CATHODE', 'K', 'NEG', '-', '2', 'PIN2'].includes(pId)) { px = 115; py = 30; }
       } else if (comp.type.includes('transistor') || comp.type.includes('mosfet')) {
         if (pId === 'BASE' || pId === 'GATE' || pId === 'B' || pId === 'G') { px = 15; py = 50; }
         else if (pId === 'COLLECTOR' || pId === 'DRAIN' || pId === 'C' || pId === 'D') { px = 80; py = 15; }
         else if (pId === 'EMITTER' || pId === 'SOURCE' || pId === 'E' || pId === 'S') { px = 80; py = 85; }
+      } else if (comp.type.includes('esp32')) {
+        // ESP32 DevKit V1 (Full 30-Pin Module Schematic Pin Resolver)
+        const ESP32_LEFT = ['EN', 'VP', 'VN', '34', '35', '32', '33', '25', '26', '27', '14', '12', '13', 'GND_L', 'VIN'];
+        const ESP32_RIGHT = ['23', '22', 'TX', 'RX', '21', 'GND_R', '19', '18', '5', '17', '16', '4', '0', '2', '3V3'];
+
+        const leftIdx = ESP32_LEFT.findIndex((id) =>
+          id === pId ||
+          (id === 'VP' && (pId === '36' || pId === 'D36' || pId === 'GPIO36')) ||
+          (id === 'VN' && (pId === '39' || pId === 'D39' || pId === 'GPIO39')) ||
+          (id === '34' && (pId === 'D34' || pId === 'GPIO34')) ||
+          (id === '35' && (pId === 'D35' || pId === 'GPIO35')) ||
+          (id === '32' && (pId === 'D32' || pId === 'GPIO32')) ||
+          (id === '33' && (pId === 'D33' || pId === 'GPIO33')) ||
+          (id === '25' && (pId === 'D25' || pId === 'GPIO25' || pId === 'DAC1')) ||
+          (id === '26' && (pId === 'D26' || pId === 'GPIO26' || pId === 'DAC2')) ||
+          (id === '27' && (pId === 'D27' || pId === 'GPIO27')) ||
+          (id === '14' && (pId === 'D14' || pId === 'GPIO14')) ||
+          (id === '12' && (pId === 'D12' || pId === 'GPIO12')) ||
+          (id === '13' && (pId === 'D13' || pId === 'GPIO13')) ||
+          (id === 'GND_L' && (pId === 'GND' || pId === 'GND1' || pId === 'GND_1')) ||
+          (id === 'VIN' && (pId === '5V' || pId === 'VBUS'))
+        );
+
+        if (leftIdx !== -1) {
+          px = 0;
+          py = 52 + leftIdx * 24;
+        } else {
+          const rightIdx = ESP32_RIGHT.findIndex((id) =>
+            id === pId ||
+            (id === '23' && (pId === 'D23' || pId === 'GPIO23' || pId === 'MOSI')) ||
+            (id === '22' && (pId === 'D22' || pId === 'GPIO22' || pId === 'SCL')) ||
+            (id === 'TX' && (pId === '1' || pId === 'TX0' || pId === 'D1' || pId === 'GPIO1' || pId === 'U0TXD')) ||
+            (id === 'RX' && (pId === '3' || pId === 'RX0' || pId === 'D3' || pId === 'GPIO3' || pId === 'U0RXD')) ||
+            (id === '21' && (pId === 'D21' || pId === 'GPIO21' || pId === 'SDA')) ||
+            (id === 'GND_R' && (pId === 'GND' || pId === 'GND2' || pId === 'GND_2')) ||
+            (id === '19' && (pId === 'D19' || pId === 'GPIO19' || pId === 'MISO')) ||
+            (id === '18' && (pId === 'D18' || pId === 'GPIO18' || pId === 'SCK' || pId === 'CLK')) ||
+            (id === '5' && (pId === 'D5' || pId === 'GPIO5' || pId === 'CS' || pId === 'SS')) ||
+            (id === '17' && (pId === 'D17' || pId === 'GPIO17' || pId === 'TX2')) ||
+            (id === '16' && (pId === 'D16' || pId === 'GPIO16' || pId === 'RX2')) ||
+            (id === '4' && (pId === 'D4' || pId === 'GPIO4')) ||
+            (id === '0' && (pId === 'D0' || pId === 'GPIO0' || pId === 'BOOT')) ||
+            (id === '2' && (pId === 'D2' || pId === 'GPIO2' || pId === 'LED')) ||
+            (id === '3V3' && (pId === '3.3V' || pId === 'VCC' || pId === 'VCC_3V3'))
+          );
+
+          if (rightIdx !== -1) {
+            px = 360;
+            py = 52 + rightIdx * 24;
+          }
+        }
       } else if (comp.type.startsWith('mcu-')) {
+        // Arduino Uno, Nano, Mega, ESP8266, Pico
         if (['5V', 'VCC'].includes(pId)) { px = 8; py = 46; }
         else if (['3V3', '3.3V'].includes(pId)) { px = 8; py = 76; }
         else if (pId.includes('GND')) { px = 8; py = 106; }
         else if (pId === 'A0') { px = 8; py = 136; }
         else if (pId === 'A1') { px = 8; py = 166; }
-        else if (pId === 'VIN') { px = 8; py = 196; }
-        else if (pId === '2' || pId === 'D2') { px = 272; py = 46; }
-        else if (pId === '3' || pId === 'D3' || pId === '4' || pId === 'D4') { px = 272; py = 76; }
-        else if (pId === '5' || pId === 'D5') { px = 272; py = 106; }
-        else if (pId === '18' || pId === 'D18') { px = 272; py = 136; }
-        else if (pId === '13' || pId === 'D13') { px = 272; py = 166; }
-        else if (pId === 'SDA' || pId === '21') { px = 272; py = 196; }
+        else if (pId === 'A2') { px = 8; py = 196; }
+        else if (pId === 'A3') { px = 8; py = 226; }
+        else if (pId === 'VIN') { px = 8; py = 256; }
+        else if (pId === '2' || pId === 'D2') { px = 312; py = 46; }
+        else if (pId === '3' || pId === 'D3') { px = 312; py = 76; }
+        else if (pId === '4' || pId === 'D4') { px = 312; py = 106; }
+        else if (pId === '5' || pId === 'D5') { px = 312; py = 136; }
+        else if (pId === '6' || pId === 'D6') { px = 312; py = 166; }
+        else if (pId === '13' || pId === 'D13') { px = 312; py = 196; }
+        else if (pId === 'SDA') { px = 312; py = 226; }
+        else if (pId === 'SCL') { px = 312; py = 256; }
+      } else if (comp.type.includes('relay')) {
+        if (pId === 'VCC') { px = 12; py = 25; }
+        else if (pId === 'IN' || pId === 'IN1' || pId === 'PWM') { px = 12; py = 45; }
+        else if (pId === 'IN2') { px = 12; py = 58; }
+        else if (pId === 'IN3') { px = 12; py = 70; }
+        else if (pId === 'IN4') { px = 12; py = 80; }
+        else if (pId.includes('GND')) { px = 12; py = 65; }
+        else if (pId === 'NO' || pId === 'NO1') { px = 148; py = 25; }
+        else if (pId === 'COM' || pId === 'COM1') { px = 148; py = 45; }
+        else if (pId === 'NC' || pId === 'NC1') { px = 148; py = 65; }
+        else if (pId === 'NO2') { px = 148; py = 75; }
+        else if (pId === 'COM2') { px = 148; py = 85; }
+      } else if (comp.type.includes('hcsr04') || comp.type.includes('ultrasonic')) {
+        if (pId === 'VCC') { px = 12; py = 22; }
+        else if (pId === 'TRIG') { px = 12; py = 40; }
+        else if (pId === 'ECHO') { px = 12; py = 58; }
+        else if (pId.includes('GND')) { px = 138; py = 40; }
+      } else if (comp.type.includes('dht')) {
+        if (pId === 'VCC') { px = 12; py = 22; }
+        else if (pId === 'DATA' || pId === 'DAT') { px = 12; py = 40; }
+        else if (pId === 'NC') { px = 12; py = 58; }
+        else if (pId.includes('GND')) { px = 128; py = 40; }
+      } else if (comp.type.includes('pir')) {
+        if (pId === 'VCC') { px = 12; py = 22; }
+        else if (pId.includes('GND')) { px = 12; py = 54; }
+        else if (pId === 'OUT') { px = 128; py = 38; }
+      } else if (comp.type.includes('servo')) {
+        if (pId.includes('GND')) { px = 12; py = 22; }
+        else if (pId === 'VCC') { px = 12; py = 38; }
+        else if (pId === 'PWM' || pId === 'SIG' || pId === 'IN') { px = 12; py = 54; }
+      } else if (comp.type.includes('stepper')) {
+        if (pId === 'IN1') { px = 14; py = 22; }
+        else if (pId === 'IN2') { px = 14; py = 38; }
+        else if (pId === 'IN3') { px = 14; py = 54; }
+        else if (pId === 'IN4') { px = 14; py = 70; }
+        else if (pId === 'VCC') { px = 60; py = 76; }
+        else if (pId.includes('GND')) { px = 78; py = 76; }
+      } else if (comp.type.includes('motor-dc')) {
+        if (['POS', '+', 'PIN1', '1'].includes(pId)) { px = 12; py = 35; }
+        else if (['NEG', '-', 'PIN2', '2'].includes(pId)) { px = 118; py = 35; }
+      } else if (comp.type.includes('oled') || comp.type.includes('lcd')) {
+        if (pId.includes('GND')) { px = 12; py = 20; }
+        else if (pId === 'VCC') { px = 12; py = 36; }
+        else if (pId === 'SCL') { px = 12; py = 52; }
+        else if (pId === 'SDA') { px = 12; py = 68; }
+      } else if (comp.type.includes('tm1637')) {
+        if (pId.includes('GND')) { px = 12; py = 16; }
+        else if (pId === 'VCC') { px = 12; py = 28; }
+        else if (pId === 'DIO') { px = 12; py = 40; }
+        else if (pId === 'CLK') { px = 12; py = 52; }
+      } else if (comp.type.includes('buzzer')) {
+        if (['POS', '+', 'PIN1', '1'].includes(pId)) { px = 12; py = 32; }
+        else if (['NEG', '-', 'PIN2', '2'].includes(pId)) { px = 118; py = 32; }
+      } else if (comp.type.includes('power-distribution-bus')) {
+        if (pId.startsWith('VCC')) {
+          const num = parseInt(pId.replace('VCC_', '') || '1');
+          px = 25 + (num - 1) * 40; py = 20;
+        } else if (pId.startsWith('GND')) {
+          const num = parseInt(pId.replace('GND_', '') || '1');
+          px = 25 + (num - 1) * 40; py = 60;
+        }
+      } else if (comp.type.includes('terminal-block')) {
+        if (pId.endsWith('A')) {
+          const row = parseInt(pId.charAt(0) || '1');
+          px = 15; py = 20 + (row - 1) * 20;
+        } else if (pId.endsWith('B')) {
+          const row = parseInt(pId.charAt(0) || '1');
+          px = 145; py = 20 + (row - 1) * 20;
+        }
+      } else if (comp.type.includes('mb102')) {
+        if (pId.includes('VCC_A')) { px = 16; py = 62; }
+        else if (pId.includes('GND_A')) { px = 30; py = 62; }
+        else if (pId.includes('VCC_B')) { px = 100; py = 62; }
+        else if (pId.includes('GND_B')) { px = 114; py = 62; }
+      } else if (comp.type.includes('sensor-')) {
+        if (pId === 'VCC') { px = 12; py = 18; }
+        else if (pId.includes('GND')) { px = 12; py = 32; }
+        else if (pId === 'DO' || pId === 'OUT') { px = 12; py = 46; }
+        else if (pId === 'AO') { px = 12; py = 58; }
       }
     }
 
@@ -530,7 +693,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     if (wireStart) {
       if (e.button === 0) {
         const coords = getCanvasCoords(e.clientX, e.clientY);
-        // Check if user clicked on or near ANY terminal pin (within 36px snap):
+        // Check if user clicked on or near ANY terminal pin (within 50px snap):
         let nearestPin: { compId: string; pinId: string; dist: number } | null = null;
         for (const c of components) {
           const pins = getComponentPins(c);
@@ -538,7 +701,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
             if (c.id === wireStart.compId && p.id === wireStart.pinId) continue;
             const pos = getPinAbsolutePos(c, p);
             const d = Math.hypot(pos.x - coords.x, pos.y - coords.y);
-            if (d <= 36 && (!nearestPin || d < nearestPin.dist)) {
+            if (d <= 50 && (!nearestPin || d < nearestPin.dist)) {
               nearestPin = { compId: c.id, pinId: p.id, dist: d };
             }
           }
@@ -598,7 +761,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
     const coords = getCanvasCoords(e.clientX, e.clientY);
     setCursorPos(coords);
 
-    // If routing a wire: Magnetic terminal snap within 36px
+    // If routing a wire: Magnetic terminal snap within 50px
     if (wireStart) {
       let nearest: { compId: string; pinId: string; dist: number } | null = null;
       for (const c of components) {
@@ -607,7 +770,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           if (c.id === wireStart.compId && p.id === wireStart.pinId) continue;
           const pos = getPinAbsolutePos(c, p);
           const d = Math.hypot(pos.x - coords.x, pos.y - coords.y);
-          if (d <= 36 && (!nearest || d < nearest.dist)) {
+          if (d <= 50 && (!nearest || d < nearest.dist)) {
             nearest = { compId: c.id, pinId: p.id, dist: d };
           }
         }
@@ -619,7 +782,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
         const currDef = currComp ? findPinDef(getComponentPins(currComp), hoveredPin.pinId) : null;
         if (currDef && currComp) {
           const currPos = getPinAbsolutePos(currComp, currDef);
-          if (Math.hypot(currPos.x - coords.x, currPos.y - coords.y) > 44) {
+          if (Math.hypot(currPos.x - coords.x, currPos.y - coords.y) > 60) {
             setHoveredPin(null);
           }
         } else {
@@ -717,7 +880,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           if (c.id === wireStart.compId && p.id === wireStart.pinId) continue;
           const pos = getPinAbsolutePos(c, p);
           const d = Math.hypot(pos.x - coords.x, pos.y - coords.y);
-          if (d <= 40 && (!nearest || d < nearest.dist)) {
+          if (d <= 50 && (!nearest || d < nearest.dist)) {
             nearest = { compId: c.id, pinId: p.id, dist: d };
           }
         }
@@ -1761,6 +1924,8 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           onToggleOscilloscope={onToggleOscilloscope}
           isFunctionGeneratorOpen={isFunctionGeneratorOpen}
           onToggleFunctionGenerator={onToggleFunctionGenerator}
+          isCalculatorOpen={isCalculatorOpen}
+          onToggleCalculator={onToggleCalculator}
           dropUp={true}
         />
 
@@ -1849,10 +2014,10 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
           const comp2 = components.find((c) => c.id === wire.toCompId);
           if (!comp1 || !comp2) return null;
 
-          const def1 = findPinDef(getComponentPins(comp1), wire.fromPinId);
-          const def2 = findPinDef(getComponentPins(comp2), wire.toPinId);
-
-          if (!def1 || !def2) return null;
+          const pins1 = getComponentPins(comp1);
+          const pins2 = getComponentPins(comp2);
+          const def1 = findPinDef(pins1, wire.fromPinId) || (pins1.length > 0 ? pins1[0] : { id: wire.fromPinId, name: wire.fromPinId, type: 'passive', x: 15, y: 15 });
+          const def2 = findPinDef(pins2, wire.toPinId) || (pins2.length > 0 ? pins2[pins2.length - 1] : { id: wire.toPinId, name: wire.toPinId, type: 'passive', x: 25, y: 25 });
 
           const pos1 = getPinAbsolutePos(comp1, def1);
           const pos2 = getPinAbsolutePos(comp2, def2);
@@ -2513,9 +2678,9 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
 
                   // Determine target pin: exact hovered pin or closest pin to click coordinates
                   let targetPinId = hoveredPin?.compId === comp.id ? hoveredPin.pinId : null;
-                  if (!targetPinId) {
+                  const pins = getComponentPins(comp);
+                  if (!targetPinId && pins.length > 0) {
                     const clickCoords = getCanvasCoords(e.clientX, e.clientY);
-                    const pins = getComponentPins(comp);
                     let closestDist = Infinity;
                     for (const p of pins) {
                       const pos = getPinAbsolutePos(comp, p);
@@ -2525,8 +2690,8 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                         targetPinId = p.id;
                       }
                     }
-                    if (closestDist > 90 && comp.id !== wireStart.compId) {
-                      targetPinId = getBestTargetPin(wireStart.pinId, comp);
+                    if (!targetPinId && comp.id !== wireStart.compId) {
+                      targetPinId = getBestTargetPin(wireStart.pinId, comp) || pins[0].id;
                     }
                   }
 
@@ -2539,15 +2704,15 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                     setConnectionToast(`⚡ Wire connected from ${wireStart.pinId} to ${targetName} (${targetPinId})!`);
                     setTimeout(() => setConnectionToast(null), 3500);
                     lastWireConnectTimeRef.current = Date.now();
-                  }
 
-                  // Finish wire creation
-                  wireStartRef.current = null;
-                  setWireStart(null);
-                  setWireWaypoints([]);
-                  setIsDraggingWire(false);
-                  setHoveredPin(null);
-                  return;
+                    // Finish wire creation successfully
+                    wireStartRef.current = null;
+                    setWireStart(null);
+                    setWireWaypoints([]);
+                    setIsDraggingWire(false);
+                    setHoveredPin(null);
+                    return;
+                  }
                 }
                 e.stopPropagation();
                 handleStartDragComponent(comp.id, e.clientX, e.clientY);
@@ -2568,6 +2733,46 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
               onDoubleClick={(e) => {
                 e.stopPropagation();
                 onDoubleClickComponent?.(comp.id);
+              }}
+              onMouseUp={(e) => {
+                const activeStart = wireStartRef.current || wireStart;
+                if (activeStart && activeStart.compId !== comp.id) {
+                  e.stopPropagation();
+                  let targetPinId = hoveredPin?.compId === comp.id ? hoveredPin.pinId : null;
+                  const pins = getComponentPins(comp);
+                  if (!targetPinId && pins.length > 0) {
+                    const clickCoords = getCanvasCoords(e.clientX, e.clientY);
+                    let closestDist = Infinity;
+                    for (const p of pins) {
+                      const pos = getPinAbsolutePos(comp, p);
+                      const d = Math.hypot(pos.x - clickCoords.x, pos.y - clickCoords.y);
+                      if (d < closestDist) {
+                        closestDist = d;
+                        targetPinId = p.id;
+                      }
+                    }
+                    if (!targetPinId) {
+                      targetPinId = getBestTargetPin(activeStart.pinId, comp) || pins[0].id;
+                    }
+                  }
+
+                  if (targetPinId) {
+                    onAddWire(activeStart.compId, activeStart.pinId, comp.id, targetPinId, wireColor, wireWaypoints, currentRoutingType);
+                    try {
+                      soundEngine.playRelayClick(true);
+                    } catch (_) {}
+                    const targetName = comp.properties?.label || comp.name || comp.type;
+                    setConnectionToast(`⚡ Wire connected from ${activeStart.pinId} to ${targetName} (${targetPinId})!`);
+                    setTimeout(() => setConnectionToast(null), 3500);
+                    lastWireConnectTimeRef.current = Date.now();
+
+                    wireStartRef.current = null;
+                    setWireStart(null);
+                    setWireWaypoints([]);
+                    setIsDraggingWire(false);
+                    setHoveredPin(null);
+                  }
+                }
               }}
               onTouchStart={(e) => {
                 if (Date.now() - lastWireConnectTimeRef.current < 400) {
@@ -2701,6 +2906,7 @@ export const CircuitCanvas: React.FC<CircuitCanvasProps> = ({
                 onPinContextMenu={handlePinContextMenu}
                 onPinHover={(pinId) => setHoveredPin(pinId ? { compId: comp.id, pinId } : null)}
                 onUpdateProperty={onUpdateProperty}
+                onOpenOscilloscope={onToggleOscilloscope}
               />
             </div>
           );
@@ -2788,6 +2994,7 @@ interface ComponentRendererProps {
   onPinContextMenu?: (e: React.MouseEvent, comp: CircuitComponent, pin: PinDef) => void;
   onPinHover: (pinId: string | null) => void;
   onUpdateProperty?: (compId: string, key: string, value: any) => void;
+  onOpenOscilloscope?: () => void;
 }
 
 const ComponentRenderer: React.FC<ComponentRendererProps> = ({
@@ -2803,6 +3010,7 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
   onPinContextMenu,
   onPinHover,
   onUpdateProperty,
+  onOpenOscilloscope,
 }) => {
   // Helper to render interactive pins supporting drag-and-drop
   const renderPin = (
@@ -2858,8 +3066,8 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = ({
           e.stopPropagation();
         }}
       >
-        {/* Generous hit target area (30px diameter) to make clicking and hovering terminals 100% reliable */}
-        <div className="absolute -inset-2.5 rounded-full pointer-events-auto z-10" />
+        {/* Generous hit target area (42px diameter) to make clicking and hovering terminals 100% reliable */}
+        <div className="absolute -inset-3.5 rounded-full pointer-events-auto z-10" />
 
         {/* Realistic ENIG Gold Annular Solder Pad with Drill Through-Hole */}
         <div

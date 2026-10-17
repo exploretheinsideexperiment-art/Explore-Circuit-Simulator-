@@ -1,5 +1,6 @@
 import React from 'react';
 import { CircuitComponent, PinDef } from '../../types';
+import { getComponentPins } from '../../engine/peripherals/definitions';
 
 interface SchematicSymbolProps {
   comp: CircuitComponent;
@@ -608,11 +609,181 @@ export const SchematicSymbol: React.FC<SchematicSymbolProps> = ({
     );
   }
 
-  // --- MICROCONTROLLER BOARDS (ESP32, ARDUINO UNO, NANO, ESP8266, RPI PICO) ---
+  // --- ESP32 DEVKIT V1 (AUTHENTIC 30-PIN DUAL-CORE MICROCONTROLLER MODULE) ---
+  if (type.includes('esp32')) {
+    const esp32LeftPins: { id: string; num: number; name: string; func: string; type: PinDef['type'] }[] = [
+      { id: 'EN', num: 1, name: 'EN', func: 'RESET', type: 'input' },
+      { id: 'VP', num: 2, name: 'VP (36)', func: 'ADC1_0', type: 'analog' },
+      { id: 'VN', num: 3, name: 'VN (39)', func: 'ADC1_3', type: 'analog' },
+      { id: '34', num: 4, name: 'D34', func: 'ADC1_6', type: 'analog' },
+      { id: '35', num: 5, name: 'D35', func: 'ADC1_7', type: 'analog' },
+      { id: '32', num: 6, name: 'D32', func: 'TOUCH9', type: 'gpio' },
+      { id: '33', num: 7, name: 'D33', func: 'TOUCH8', type: 'gpio' },
+      { id: '25', num: 8, name: 'D25', func: 'DAC1', type: 'gpio' },
+      { id: '26', num: 9, name: 'D26', func: 'DAC2', type: 'gpio' },
+      { id: '27', num: 10, name: 'D27', func: 'TOUCH7', type: 'gpio' },
+      { id: '14', num: 11, name: 'D14', func: 'HSPI_CLK', type: 'gpio' },
+      { id: '12', num: 12, name: 'D12', func: 'HSPI_MISO', type: 'gpio' },
+      { id: '13', num: 13, name: 'D13', func: 'HSPI_MOSI', type: 'gpio' },
+      { id: 'GND_L', num: 14, name: 'GND', func: 'GROUND', type: 'power_gnd' },
+      { id: 'VIN', num: 15, name: 'VIN', func: '5V IN', type: 'power_vcc' },
+    ];
+
+    const esp32RightPins: { id: string; num: number; name: string; func: string; type: PinDef['type'] }[] = [
+      { id: '23', num: 16, name: 'D23', func: 'VSPI_MOSI', type: 'gpio' },
+      { id: '22', num: 17, name: 'D22', func: 'I2C SCL', type: 'i2c_scl' },
+      { id: 'TX', num: 18, name: 'TX0/1', func: 'UART0 TX', type: 'uart_tx' },
+      { id: 'RX', num: 19, name: 'RX0/3', func: 'UART0 RX', type: 'uart_rx' },
+      { id: '21', num: 20, name: 'D21', func: 'I2C SDA', type: 'i2c_sda' },
+      { id: 'GND_R', num: 21, name: 'GND', func: 'GROUND', type: 'power_gnd' },
+      { id: '19', num: 22, name: 'D19', func: 'VSPI_MISO', type: 'gpio' },
+      { id: '18', num: 23, name: 'D18', func: 'VSPI_CLK', type: 'gpio' },
+      { id: '5', num: 24, name: 'D5', func: 'VSPI_CS', type: 'gpio' },
+      { id: '17', num: 25, name: 'D17', func: 'UART2 TX', type: 'gpio' },
+      { id: '16', num: 26, name: 'D16', func: 'UART2 RX', type: 'gpio' },
+      { id: '4', num: 27, name: 'D4', func: 'TOUCH0', type: 'gpio' },
+      { id: '0', num: 28, name: 'D0', func: 'BOOT', type: 'gpio' },
+      { id: '2', num: 29, name: 'D2', func: 'IO2 (LED)', type: 'gpio' },
+      { id: '3V3', num: 30, name: '3V3', func: '3.3V OUT', type: 'power_vcc' },
+    ];
+
+    const isLed2On =
+      (pinStates[`${comp.id}:2`]?.voltage ?? 0) >= 1.5 ||
+      (pinStates[`${comp.id}:D2`]?.voltage ?? 0) >= 1.5;
+
+    return (
+      <div className="relative w-[360px] h-[420px] bg-[#070b14] border-2 border-cyan-400 rounded-lg shadow-2xl p-2 select-none font-mono">
+        {/* Top Header Bar */}
+        <div className="flex items-center justify-between border-b border-cyan-500/40 pb-1 mb-2 px-1">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="font-bold text-xs text-white tracking-wider">
+              ESP32 DEVKIT V1
+            </span>
+            <span className="text-[9px] bg-cyan-950 text-cyan-300 px-1 rounded border border-cyan-800">
+              30-PIN MCU
+            </span>
+          </div>
+          <span className="text-[8.5px] text-slate-400">
+            240MHz Wi-Fi+BT
+          </span>
+        </div>
+
+        {/* Left Side Pins (Pins 1 - 15) */}
+        <div className="absolute left-0 top-[40px] bottom-2 w-[130px]">
+          {esp32LeftPins.map((p, idx) => {
+            const y = 52 + idx * 24;
+            return (
+              <div
+                key={p.id}
+                style={{ top: `${40 + idx * 24}px` }}
+                className="absolute left-0 right-0 h-[24px] flex items-center px-1 group/pin"
+              >
+                {renderPin(
+                  { id: p.id, name: p.name, type: p.type, x: 0, y },
+                  { left: '-7px', top: '5px', labelPos: 'none' }
+                )}
+                {/* Horizontal Lead Line */}
+                <div className="w-3 h-0.5 bg-cyan-400/80 mr-1.5 ml-0.5" />
+                <span className="text-[7.5px] font-bold text-slate-500 bg-slate-900 border border-slate-800 px-1 py-0.2 rounded shrink-0 mr-1.5">
+                  {p.num}
+                </span>
+                <span className={`text-[9px] font-bold truncate mr-1 ${
+                  p.type === 'power_vcc' ? 'text-rose-400' :
+                  p.type === 'power_gnd' ? 'text-sky-300' :
+                  p.type === 'analog' ? 'text-emerald-300' :
+                  'text-cyan-300'
+                }`}>
+                  {p.name}
+                </span>
+                <span className="text-[7px] text-slate-500 truncate ml-auto">
+                  {p.func}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Center MCU Core Box */}
+        <div className="absolute left-[132px] right-[132px] top-[44px] bottom-3 border border-cyan-800/60 rounded-md bg-[#040812] flex flex-col items-center justify-between p-2 shadow-inner">
+          <div className="flex flex-col items-center gap-1 mt-1 text-center">
+            <div className="w-10 h-10 border border-cyan-500/70 rounded-md bg-cyan-950/60 flex flex-col items-center justify-center text-cyan-400 shadow">
+              <span className="text-[10.5px] font-black tracking-tight">ESP32</span>
+              <span className="text-[6.5px] text-cyan-300 font-bold">WROOM</span>
+            </div>
+            <span className="text-[9px] font-black text-white">ESP-WROOM-32</span>
+            <span className="text-[7.5px] text-cyan-400/90 font-bold">Dual Xtensa LX6</span>
+          </div>
+
+          <div className="w-full space-y-1 my-auto px-1.5 py-1 bg-slate-950/80 rounded border border-slate-800/80 text-[7px] text-slate-400">
+            <div className="flex justify-between items-center text-emerald-400 font-bold">
+              <span>Wi-Fi 802.11bgn</span>
+              <span>2.4 GHz</span>
+            </div>
+            <div className="flex justify-between items-center text-indigo-400 font-bold">
+              <span>Bluetooth 4.2</span>
+              <span>BLE</span>
+            </div>
+            <div className="flex justify-between items-center text-slate-400">
+              <span>Flash: 4MB</span>
+              <span>SRAM: 520K</span>
+            </div>
+          </div>
+
+          <div className="w-full flex items-center justify-between border-t border-cyan-900/40 pt-1 text-[7px]">
+            <span className="text-slate-500">BOOT: D0</span>
+            <div className="flex items-center gap-1">
+              <span className={`w-2 h-2 rounded-full transition-all ${
+                isLed2On ? 'bg-cyan-400 shadow-[0_0_8px_#22d3ee]' : 'bg-cyan-950 border border-cyan-800'
+              }`} />
+              <span className="text-cyan-300 font-bold">LED: D2</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Side Pins (Pins 16 - 30) */}
+        <div className="absolute right-0 top-[40px] bottom-2 w-[130px] text-right">
+          {esp32RightPins.map((p, idx) => {
+            const y = 52 + idx * 24;
+            return (
+              <div
+                key={p.id}
+                style={{ top: `${40 + idx * 24}px` }}
+                className="absolute left-0 right-0 h-[24px] flex items-center justify-end px-1 group/pin"
+              >
+                <span className="text-[7px] text-slate-500 truncate mr-auto">
+                  {p.func}
+                </span>
+                <span className={`text-[9px] font-bold truncate ml-1 mr-1.5 ${
+                  p.type === 'power_vcc' ? 'text-amber-300' :
+                  p.type === 'power_gnd' ? 'text-sky-300' :
+                  p.type === 'i2c_sda' || p.type === 'i2c_scl' ? 'text-teal-300' :
+                  p.type === 'uart_tx' || p.type === 'uart_rx' ? 'text-violet-300' :
+                  'text-cyan-300'
+                }`}>
+                  {p.name}
+                </span>
+                <span className="text-[7.5px] font-bold text-slate-500 bg-slate-900 border border-slate-800 px-1 py-0.2 rounded shrink-0 mr-1.5">
+                  {p.num}
+                </span>
+                {/* Horizontal Lead Line */}
+                <div className="w-3 h-0.5 bg-cyan-400/80 mr-0.5" />
+                {renderPin(
+                  { id: p.id, name: p.name, type: p.type, x: 360, y },
+                  { right: '-7px', top: '5px', labelPos: 'none' }
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // --- OTHER MICROCONTROLLER BOARDS (ARDUINO UNO, NANO, ESP8266, RPI PICO) ---
   if (type.startsWith('mcu-')) {
     const isArduinoUno = type.includes('arduino-uno');
     const isArduinoNano = type.includes('arduino-nano') || type.includes('nano');
-    const isEsp32 = type.includes('esp32');
     const isEsp8266 = type.includes('esp8266') || type.includes('nodemcu');
     const isPico = type.includes('pico');
 
@@ -620,30 +791,26 @@ export const SchematicSymbol: React.FC<SchematicSymbolProps> = ({
       ? 'ARDUINO UNO R3'
       : isArduinoNano
       ? 'ARDUINO NANO'
-      : isEsp32
-      ? 'ESP32 DEVKIT V1'
       : isEsp8266
       ? 'ESP8266 NODEMCU'
       : 'RASPBERRY PI PICO';
 
     const chipName = isArduinoUno || isArduinoNano
       ? 'ATMEGA328P'
-      : isEsp32
-      ? 'ESP-WROOM-32'
       : isEsp8266
       ? 'ESP-12E (Wi-Fi)'
       : 'RP2040 (ARM)';
 
     return (
-      <div className="relative w-[280px] h-[230px] bg-[#070b14] border-2 border-cyan-400 rounded-lg shadow-2xl p-2 select-none">
+      <div className="relative w-[320px] h-[320px] bg-[#070b14] border-2 border-cyan-400 rounded-lg shadow-2xl p-2 select-none font-mono">
         <div className="flex items-center justify-between border-b border-cyan-500/40 pb-1 mb-2 px-1">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
-            <span className="font-mono font-bold text-xs text-white tracking-wider">
+            <span className="font-bold text-xs text-white tracking-wider">
               {title}
             </span>
           </div>
-          <span className="text-[9px] font-mono bg-cyan-950 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-800">
+          <span className="text-[9px] bg-cyan-950 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-800">
             SCHEMATIC BLOCK
           </span>
         </div>
@@ -655,48 +822,298 @@ export const SchematicSymbol: React.FC<SchematicSymbolProps> = ({
           {renderPin({ id: 'GND', name: 'GND', type: 'power_gnd', x: 8, y: 106 }, { left: '-4px', top: '98px', labelPos: 'right', customLabel: 'GND' })}
           {renderPin({ id: 'A0', name: 'A0', type: 'analog', x: 8, y: 136 }, { left: '-4px', top: '128px', labelPos: 'right', customLabel: 'A0' })}
           {renderPin({ id: 'A1', name: 'A1', type: 'analog', x: 8, y: 166 }, { left: '-4px', top: '158px', labelPos: 'right', customLabel: 'A1' })}
-          {renderPin({ id: 'VIN', name: 'VIN', type: 'power_vcc', x: 8, y: 196 }, { left: '-4px', top: '188px', labelPos: 'right', customLabel: 'VIN' })}
+          {renderPin({ id: 'A2', name: 'A2', type: 'analog', x: 8, y: 196 }, { left: '-4px', top: '188px', labelPos: 'right', customLabel: 'A2' })}
+          {renderPin({ id: 'A3', name: 'A3', type: 'analog', x: 8, y: 226 }, { left: '-4px', top: '218px', labelPos: 'right', customLabel: 'A3' })}
+          {renderPin({ id: 'VIN', name: 'VIN', type: 'power_vcc', x: 8, y: 256 }, { left: '-4px', top: '248px', labelPos: 'right', customLabel: 'VIN' })}
         </div>
 
         {/* Center MCU Core Box */}
-        <div className="absolute inset-x-20 top-11 bottom-3 border border-dashed border-cyan-800/60 rounded flex flex-col items-center justify-center p-2 bg-slate-950/60">
-          <div className="w-12 h-12 border border-cyan-500/60 rounded flex flex-col items-center justify-center bg-cyan-950/40 text-cyan-400 font-mono text-[10px] font-bold shadow-inner">
+        <div className="absolute inset-x-22 top-11 bottom-3 border border-dashed border-cyan-800/60 rounded flex flex-col items-center justify-center p-2 bg-slate-950/60">
+          <div className="w-12 h-12 border border-cyan-500/60 rounded flex flex-col items-center justify-center bg-cyan-950/40 text-cyan-400 text-[10px] font-bold shadow-inner">
             <span>MCU</span>
             <span className="text-[7px] text-cyan-300 font-normal">CORE</span>
           </div>
-          <span className="text-[9px] font-mono text-cyan-200 mt-2 text-center font-bold">
+          <span className="text-[9px] text-cyan-200 mt-2 text-center font-bold">
             {chipName}
           </span>
-          <span className="text-[8px] font-mono text-slate-500 mt-0.5 text-center">
-            {isEsp32 || isEsp8266 ? '2.4GHz Wi-Fi' : '16MHz Clock'}
+          <span className="text-[8px] text-slate-500 mt-0.5 text-center">
+            {isEsp8266 ? '2.4GHz Wi-Fi' : '16MHz Clock'}
           </span>
         </div>
 
         {/* Right Side Pins (Digital GPIOs & PWM) */}
         <div className="absolute right-2 top-10 space-y-3">
-          {renderPin({ id: isEsp32 ? '2' : '2', name: 'D2 / GPIO2', type: 'gpio', x: 272, y: 46 }, { right: '-4px', top: '38px', labelPos: 'left', customLabel: 'D2' })}
-          {renderPin({ id: isEsp32 ? '4' : '3', name: 'D3 / GPIO3', type: 'pwm', x: 272, y: 76 }, { right: '-4px', top: '68px', labelPos: 'left', customLabel: isEsp32 ? 'D4' : 'D3~' })}
-          {renderPin({ id: isEsp32 ? '5' : '4', name: 'D4 / GPIO4', type: 'gpio', x: 272, y: 106 }, { right: '-4px', top: '98px', labelPos: 'left', customLabel: isEsp32 ? 'D5' : 'D4' })}
-          {renderPin({ id: isEsp32 ? '18' : '5', name: 'D5 / GPIO5', type: 'pwm', x: 272, y: 136 }, { right: '-4px', top: '128px', labelPos: 'left', customLabel: isEsp32 ? 'D18' : 'D5~' })}
-          {renderPin({ id: isEsp32 ? '19' : '13', name: isEsp32 ? 'D19' : 'D13 (LED)', type: 'gpio', x: 272, y: 166 }, { right: '-4px', top: '158px', labelPos: 'left', customLabel: isEsp32 ? 'D19' : 'D13' })}
-          {renderPin({ id: isEsp32 ? '21' : 'SDA', name: 'SDA / I2C', type: 'i2c_sda', x: 272, y: 196 }, { right: '-4px', top: '188px', labelPos: 'left', customLabel: 'SDA' })}
+          {renderPin({ id: '2', name: 'D2 / GPIO2', type: 'gpio', x: 312, y: 46 }, { right: '-4px', top: '38px', labelPos: 'left', customLabel: 'D2' })}
+          {renderPin({ id: '3', name: 'D3 / GPIO3', type: 'pwm', x: 312, y: 76 }, { right: '-4px', top: '68px', labelPos: 'left', customLabel: 'D3~' })}
+          {renderPin({ id: '4', name: 'D4 / GPIO4', type: 'gpio', x: 312, y: 106 }, { right: '-4px', top: '98px', labelPos: 'left', customLabel: 'D4' })}
+          {renderPin({ id: '5', name: 'D5 / GPIO5', type: 'pwm', x: 312, y: 136 }, { right: '-4px', top: '128px', labelPos: 'left', customLabel: 'D5~' })}
+          {renderPin({ id: '6', name: 'D6 / GPIO6', type: 'pwm', x: 312, y: 166 }, { right: '-4px', top: '158px', labelPos: 'left', customLabel: 'D6~' })}
+          {renderPin({ id: '13', name: 'D13 (LED)', type: 'gpio', x: 312, y: 196 }, { right: '-4px', top: '188px', labelPos: 'left', customLabel: 'D13' })}
+          {renderPin({ id: 'SDA', name: 'SDA / I2C', type: 'i2c_sda', x: 312, y: 226 }, { right: '-4px', top: '218px', labelPos: 'left', customLabel: 'SDA' })}
+          {renderPin({ id: 'SCL', name: 'SCL / I2C', type: 'i2c_scl', x: 312, y: 256 }, { right: '-4px', top: '248px', labelPos: 'left', customLabel: 'SCL' })}
         </div>
       </div>
     );
   }
 
-  // --- DEFAULT EDA RECTANGULAR BLOCK SYMBOL ---
-  return (
-    <div className="relative min-w-[120px] min-h-[70px] bg-[#090d16] border border-cyan-500/60 rounded-md p-2 flex flex-col items-center justify-center select-none shadow-md">
-      <span className="text-[11px] font-mono font-bold text-cyan-300 text-center">
-        {props.label || comp.name || type.toUpperCase()}
-      </span>
-      <span className="text-[9px] font-mono text-slate-400 text-center mt-0.5">
-        SCHEMATIC
-      </span>
+  // --- 1-CHANNEL RELAY MODULE ---
+  if (type.includes('relay')) {
+    return (
+      <div className="relative w-[160px] h-[90px] bg-[#070b14] border-2 border-amber-500/80 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-amber-500/40 pb-1 mb-1 px-1">
+          <span className="text-[10px] font-bold text-amber-400">RELAY 5V</span>
+          <span className="text-[8px] bg-amber-950 text-amber-300 px-1 rounded border border-amber-800">SPDT</span>
+        </div>
+        {/* Left Side Control Pins */}
+        <div className="absolute left-1 top-7 space-y-2">
+          {renderPin({ id: 'VCC', name: 'VCC (5V)', type: 'power_vcc', x: 12, y: 25 }, { left: '-4px', top: '18px', labelPos: 'right', customLabel: 'VCC' })}
+          {renderPin({ id: 'IN', name: 'IN (Trigger)', type: 'input', x: 12, y: 45 }, { left: '-4px', top: '38px', labelPos: 'right', customLabel: 'IN' })}
+          {renderPin({ id: 'GND', name: 'GND', type: 'power_gnd', x: 12, y: 65 }, { left: '-4px', top: '58px', labelPos: 'right', customLabel: 'GND' })}
+        </div>
+        {/* Center Coil / Switch Graphic */}
+        <div className="absolute inset-x-12 top-7 bottom-2 border border-dashed border-amber-500/30 rounded flex flex-col items-center justify-center p-1 bg-amber-950/20">
+          <span className="text-[8px] text-amber-300 font-bold">10A 250V</span>
+          <span className="text-[7px] text-slate-400">ISOLATED</span>
+        </div>
+        {/* Right Side Load Contacts */}
+        <div className="absolute right-1 top-7 space-y-2">
+          {renderPin({ id: 'NO', name: 'NO (Open)', type: 'passive', x: 148, y: 25 }, { right: '-4px', top: '18px', labelPos: 'left', customLabel: 'NO' })}
+          {renderPin({ id: 'COM', name: 'COM (Common)', type: 'passive', x: 148, y: 45 }, { right: '-4px', top: '38px', labelPos: 'left', customLabel: 'COM' })}
+          {renderPin({ id: 'NC', name: 'NC (Closed)', type: 'passive', x: 148, y: 65 }, { right: '-4px', top: '58px', labelPos: 'left', customLabel: 'NC' })}
+        </div>
+      </div>
+    );
+  }
 
-      {renderPin({ id: 'PIN_1', name: 'Pin 1', type: 'passive', x: 5, y: 35 }, { left: '-4px', top: '27px', labelPos: 'right', customLabel: '1' })}
-      {renderPin({ id: 'PIN_2', name: 'Pin 2', type: 'passive', x: 115, y: 35 }, { right: '-4px', top: '27px', labelPos: 'left', customLabel: '2' })}
+  // --- HC-SR04 ULTRASONIC SENSOR ---
+  if (type.includes('hcsr04') || type.includes('ultrasonic')) {
+    const dist = comp.properties?.distance ?? 35;
+    return (
+      <div className="relative w-[150px] h-[80px] bg-[#070b14] border-2 border-indigo-400/80 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-indigo-500/40 pb-1 mb-1 px-1">
+          <span className="text-[10px] font-bold text-indigo-300">HC-SR04 SONAR</span>
+          <span className="text-[8px] text-cyan-300">{Number(dist).toFixed(0)}cm</span>
+        </div>
+        {/* Pins */}
+        {renderPin({ id: 'VCC', name: 'VCC (5V)', type: 'power_vcc', x: 12, y: 22 }, { left: '-4px', top: '15px', labelPos: 'right', customLabel: 'VCC' })}
+        {renderPin({ id: 'TRIG', name: 'TRIG', type: 'input', x: 12, y: 40 }, { left: '-4px', top: '33px', labelPos: 'right', customLabel: 'TRIG' })}
+        {renderPin({ id: 'ECHO', name: 'ECHO', type: 'output', x: 12, y: 58 }, { left: '-4px', top: '51px', labelPos: 'right', customLabel: 'ECHO' })}
+        {renderPin({ id: 'GND', name: 'GND', type: 'power_gnd', x: 138, y: 40 }, { right: '-4px', top: '33px', labelPos: 'left', customLabel: 'GND' })}
+        <div className="absolute inset-x-12 top-6 bottom-2 border border-indigo-500/20 rounded flex items-center justify-center bg-indigo-950/20">
+          <span className="text-[8px] text-indigo-250 font-bold">40kHz ULTRASOUND</span>
+        </div>
+      </div>
+    );
+  }
+
+  // --- DHT22 TEMP & HUMIDITY SENSOR ---
+  if (type.includes('dht')) {
+    return (
+      <div className="relative w-[140px] h-[80px] bg-[#070b14] border-2 border-emerald-400/80 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-emerald-500/40 pb-1 mb-1 px-1">
+          <span className="text-[10px] font-bold text-emerald-300">DHT22 / AM2302</span>
+          <span className="text-[8px] text-slate-400">RH/T</span>
+        </div>
+        {renderPin({ id: 'VCC', name: 'VCC (3.3-5V)', type: 'power_vcc', x: 12, y: 22 }, { left: '-4px', top: '15px', labelPos: 'right', customLabel: 'VCC' })}
+        {renderPin({ id: 'DATA', name: 'DATA (1-Wire)', type: 'gpio', x: 12, y: 40 }, { left: '-4px', top: '33px', labelPos: 'right', customLabel: 'DATA' })}
+        {renderPin({ id: 'NC', name: 'NC (Null)', type: 'passive', x: 12, y: 58 }, { left: '-4px', top: '51px', labelPos: 'right', customLabel: 'NC' })}
+        {renderPin({ id: 'GND', name: 'GND', type: 'power_gnd', x: 128, y: 40 }, { right: '-4px', top: '33px', labelPos: 'left', customLabel: 'GND' })}
+      </div>
+    );
+  }
+
+  // --- PIR MOTION SENSOR ---
+  if (type.includes('pir')) {
+    return (
+      <div className="relative w-[140px] h-[75px] bg-[#070b14] border-2 border-rose-400/80 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-rose-500/40 pb-1 mb-1 px-1">
+          <span className="text-[10px] font-bold text-rose-300">PIR HC-SR501</span>
+          <span className="text-[8px] text-amber-300">MOTION</span>
+        </div>
+        {renderPin({ id: 'VCC', name: 'VCC', type: 'power_vcc', x: 12, y: 22 }, { left: '-4px', top: '15px', labelPos: 'right', customLabel: 'VCC' })}
+        {renderPin({ id: 'GND', name: 'GND', type: 'power_gnd', x: 12, y: 54 }, { left: '-4px', top: '47px', labelPos: 'right', customLabel: 'GND' })}
+        {renderPin({ id: 'OUT', name: 'OUT (TTL High)', type: 'output', x: 128, y: 38 }, { right: '-4px', top: '31px', labelPos: 'left', customLabel: 'OUT' })}
+      </div>
+    );
+  }
+
+  // --- SERVO MOTOR (SG90) ---
+  if (type.includes('servo')) {
+    const angle = comp.properties?.angle ?? 90;
+    return (
+      <div className="relative w-[140px] h-[75px] bg-[#070b14] border-2 border-blue-400/80 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-blue-500/40 pb-1 mb-1 px-1">
+          <span className="text-[10px] font-bold text-blue-300">SERVO SG90</span>
+          <span className="text-[8px] text-cyan-300">{angle}°</span>
+        </div>
+        {renderPin({ id: 'GND', name: 'GND (Brown)', type: 'power_gnd', x: 12, y: 22 }, { left: '-4px', top: '15px', labelPos: 'right', customLabel: 'GND' })}
+        {renderPin({ id: 'VCC', name: '5V (Red)', type: 'power_vcc', x: 12, y: 38 }, { left: '-4px', top: '31px', labelPos: 'right', customLabel: 'VCC' })}
+        {renderPin({ id: 'PWM', name: 'PWM (Orange)', type: 'pwm', x: 12, y: 54 }, { left: '-4px', top: '47px', labelPos: 'right', customLabel: 'PWM' })}
+      </div>
+    );
+  }
+
+  // --- DC MOTOR WITH PROPELLER ---
+  if (type.includes('motor-dc')) {
+    const rpm = comp.properties?.rpm ?? 0;
+    return (
+      <div className="relative w-[130px] h-[70px] bg-[#070b14] border-2 border-cyan-400/80 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-cyan-500/40 pb-1 mb-1 px-1">
+          <span className="text-[10px] font-bold text-cyan-300">DC MOTOR</span>
+          <span className="text-[8px] text-emerald-300">{rpm} RPM</span>
+        </div>
+        {renderPin({ id: 'POS', name: 'POS (+)', type: 'passive', x: 12, y: 35 }, { left: '-4px', top: '28px', labelPos: 'right', customLabel: '+' })}
+        {renderPin({ id: 'NEG', name: 'NEG (-)', type: 'passive', x: 118, y: 35 }, { right: '-4px', top: '28px', labelPos: 'left', customLabel: '-' })}
+      </div>
+    );
+  }
+
+  // --- OLED DISPLAY SSD1306 (I2C) ---
+  if (type.includes('oled')) {
+    return (
+      <div className="relative w-[160px] h-[85px] bg-[#070b14] border-2 border-cyan-400/80 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-cyan-500/40 pb-1 mb-1 px-1">
+          <span className="text-[10px] font-bold text-cyan-300">OLED 128x64</span>
+          <span className="text-[8px] bg-cyan-950 text-cyan-300 px-1 rounded">I2C</span>
+        </div>
+        {renderPin({ id: 'GND', name: 'GND', type: 'power_gnd', x: 12, y: 20 }, { left: '-4px', top: '13px', labelPos: 'right', customLabel: 'GND' })}
+        {renderPin({ id: 'VCC', name: 'VCC (3.3-5V)', type: 'power_vcc', x: 12, y: 36 }, { left: '-4px', top: '29px', labelPos: 'right', customLabel: 'VCC' })}
+        {renderPin({ id: 'SCL', name: 'SCL (Clock)', type: 'i2c_scl', x: 12, y: 52 }, { left: '-4px', top: '45px', labelPos: 'right', customLabel: 'SCL' })}
+        {renderPin({ id: 'SDA', name: 'SDA (Data)', type: 'i2c_sda', x: 12, y: 68 }, { left: '-4px', top: '61px', labelPos: 'right', customLabel: 'SDA' })}
+        <div className="absolute inset-x-14 top-6 bottom-2 border border-cyan-500/20 rounded flex items-center justify-center bg-cyan-950/20">
+          <span className="text-[8px] text-cyan-200">SSD1306</span>
+        </div>
+      </div>
+    );
+  }
+
+  // --- LCD 1602 DISPLAY (I2C) ---
+  if (type.includes('lcd')) {
+    return (
+      <div className="relative w-[160px] h-[85px] bg-[#070b14] border-2 border-cyan-400/80 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-cyan-500/40 pb-1 mb-1 px-1">
+          <span className="text-[10px] font-bold text-cyan-300">LCD 16x2</span>
+          <span className="text-[8px] bg-cyan-950 text-cyan-300 px-1 rounded">PCF8574</span>
+        </div>
+        {renderPin({ id: 'GND', name: 'GND', type: 'power_gnd', x: 12, y: 20 }, { left: '-4px', top: '13px', labelPos: 'right', customLabel: 'GND' })}
+        {renderPin({ id: 'VCC', name: 'VCC (5V)', type: 'power_vcc', x: 12, y: 36 }, { left: '-4px', top: '29px', labelPos: 'right', customLabel: 'VCC' })}
+        {renderPin({ id: 'SDA', name: 'SDA', type: 'i2c_sda', x: 12, y: 52 }, { left: '-4px', top: '45px', labelPos: 'right', customLabel: 'SDA' })}
+        {renderPin({ id: 'SCL', name: 'SCL', type: 'i2c_scl', x: 12, y: 68 }, { left: '-4px', top: '61px', labelPos: 'right', customLabel: 'SCL' })}
+        <div className="absolute inset-x-14 top-6 bottom-2 border border-cyan-500/20 rounded flex items-center justify-center bg-cyan-950/20">
+          <span className="text-[8px] text-cyan-200">HD44780</span>
+        </div>
+      </div>
+    );
+  }
+
+  // --- PIEZO BUZZER ---
+  if (type.includes('buzzer')) {
+    return (
+      <div className="relative w-[130px] h-[65px] bg-[#070b14] border-2 border-rose-400/80 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-rose-500/40 pb-1 mb-1 px-1">
+          <span className="text-[10px] font-bold text-rose-300">BUZZER</span>
+          <span className="text-[8px] text-slate-400">AUDIO</span>
+        </div>
+        {renderPin({ id: 'POS', name: 'POS (+)', type: 'passive', x: 12, y: 32 }, { left: '-4px', top: '25px', labelPos: 'right', customLabel: '+' })}
+        {renderPin({ id: 'NEG', name: 'NEG (-)', type: 'passive', x: 118, y: 32 }, { right: '-4px', top: '25px', labelPos: 'left', customLabel: '-' })}
+      </div>
+    );
+  }
+
+  // --- POWER DISTRIBUTION BUS (4 VCC & 4 GND) ---
+  if (type.includes('power-distribution-bus')) {
+    return (
+      <div className="relative w-[170px] h-[80px] bg-[#070b14] border-2 border-slate-700 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-slate-700 pb-1 mb-1 px-1">
+          <span className="text-[9px] font-bold text-yellow-300">POWER BUS</span>
+          <span className="text-[8px] text-slate-400">4-PAIR</span>
+        </div>
+        {/* Top VCC rail */}
+        <div className="flex justify-around items-center pt-1">
+          {renderPin({ id: 'VCC_1', name: 'VCC 1', type: 'passive', x: 25, y: 20 }, { left: '18px', top: '15px', labelPos: 'none' })}
+          {renderPin({ id: 'VCC_2', name: 'VCC 2', type: 'passive', x: 65, y: 20 }, { left: '58px', top: '15px', labelPos: 'none' })}
+          {renderPin({ id: 'VCC_3', name: 'VCC 3', type: 'passive', x: 105, y: 20 }, { left: '98px', top: '15px', labelPos: 'none' })}
+          {renderPin({ id: 'VCC_4', name: 'VCC 4', type: 'passive', x: 145, y: 20 }, { left: '138px', top: '15px', labelPos: 'none' })}
+        </div>
+        <div className="text-center text-[7px] text-red-400 font-bold">VCC (+) RAIL</div>
+        <div className="text-center text-[7px] text-blue-400 font-bold mt-2">GND (-) RAIL</div>
+        {/* Bottom GND rail */}
+        <div className="flex justify-around items-center">
+          {renderPin({ id: 'GND_1', name: 'GND 1', type: 'passive', x: 25, y: 60 }, { left: '18px', top: '55px', labelPos: 'none' })}
+          {renderPin({ id: 'GND_2', name: 'GND 2', type: 'passive', x: 65, y: 60 }, { left: '58px', top: '55px', labelPos: 'none' })}
+          {renderPin({ id: 'GND_3', name: 'GND 3', type: 'passive', x: 105, y: 60 }, { left: '98px', top: '55px', labelPos: 'none' })}
+          {renderPin({ id: 'GND_4', name: 'GND 4', type: 'passive', x: 145, y: 60 }, { left: '138px', top: '55px', labelPos: 'none' })}
+        </div>
+      </div>
+    );
+  }
+
+  // --- DUAL TERMINAL BLOCK 4P ---
+  if (type.includes('terminal-block')) {
+    return (
+      <div className="relative w-[160px] h-[95px] bg-[#070b14] border-2 border-slate-700 rounded-lg shadow-xl p-2 select-none font-mono">
+        <div className="flex items-center justify-between border-b border-slate-700 pb-1 mb-1 px-1">
+          <span className="text-[9px] font-bold text-slate-300">4P TERMINAL</span>
+          <span className="text-[8px] text-cyan-400">BARRIER</span>
+        </div>
+        <div className="space-y-2 pt-1">
+          {renderPin({ id: '1A', name: '1A', type: 'passive', x: 15, y: 20 }, { left: '8px', top: '15px', labelPos: 'right', customLabel: '1A' })}
+          {renderPin({ id: '1B', name: '1B', type: 'passive', x: 145, y: 20 }, { right: '8px', top: '15px', labelPos: 'left', customLabel: '1B' })}
+          {renderPin({ id: '2A', name: '2A', type: 'passive', x: 15, y: 40 }, { left: '8px', top: '35px', labelPos: 'right', customLabel: '2A' })}
+          {renderPin({ id: '2B', name: '2B', type: 'passive', x: 145, y: 40 }, { right: '8px', top: '35px', labelPos: 'left', customLabel: '2B' })}
+          {renderPin({ id: '3A', name: '3A', type: 'passive', x: 15, y: 60 }, { left: '8px', top: '55px', labelPos: 'right', customLabel: '3A' })}
+          {renderPin({ id: '3B', name: '3B', type: 'passive', x: 145, y: 60 }, { right: '8px', top: '55px', labelPos: 'left', customLabel: '3B' })}
+          {renderPin({ id: '4A', name: '4A', type: 'passive', x: 15, y: 80 }, { left: '8px', top: '75px', labelPos: 'right', customLabel: '4A' })}
+          {renderPin({ id: '4B', name: '4B', type: 'passive', x: 145, y: 80 }, { right: '8px', top: '75px', labelPos: 'left', customLabel: '4B' })}
+        </div>
+      </div>
+    );
+  }
+
+  // --- DYNAMIC EDA RECTANGULAR BLOCK SYMBOL (Universal pin resolver) ---
+  const compPins = getComponentPins(comp);
+  const leftPins = compPins.slice(0, Math.ceil(compPins.length / 2));
+  const rightPins = compPins.slice(Math.ceil(compPins.length / 2));
+  const blockHeight = Math.max(75, Math.max(leftPins.length, rightPins.length) * 24 + 36);
+
+  return (
+    <div 
+      style={{ minWidth: 140, height: blockHeight }}
+      className="relative bg-[#090d16] border border-cyan-500/70 rounded-md p-2 flex flex-col justify-between select-none shadow-md font-mono"
+    >
+      <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+        <span className="text-[10px] font-bold text-cyan-300 truncate max-w-[90px]">
+          {props.label || comp.name || type.toUpperCase()}
+        </span>
+        <span className="text-[8px] text-slate-500">SCHEMATIC</span>
+      </div>
+
+      {/* Render actual component pins dynamically so wire connection never fails! */}
+      <div className="absolute inset-0 pt-7 pb-2 px-1 flex justify-between pointer-events-none">
+        {/* Left column pins */}
+        <div className="flex flex-col justify-around">
+          {leftPins.map((p, idx) =>
+            renderPin(p, {
+              left: '-4px',
+              top: `${26 + idx * 22}px`,
+              labelPos: 'right',
+              customLabel: p.label || p.id,
+            })
+          )}
+        </div>
+
+        {/* Right column pins */}
+        <div className="flex flex-col justify-around">
+          {rightPins.map((p, idx) =>
+            renderPin(p, {
+              right: '-4px',
+              top: `${26 + idx * 22}px`,
+              labelPos: 'left',
+              customLabel: p.label || p.id,
+            })
+          )}
+        </div>
+      </div>
     </div>
   );
 };
@@ -994,6 +1411,27 @@ export const SchematicSymbolPreview: React.FC<{ type: string; width?: number; he
     const isEsp8266 = type.includes('esp8266') || type.includes('nodemcu');
     const isPico = type.includes('pico');
     const label = isUno ? 'UNO' : isNano ? 'NANO' : isEsp32 ? 'ESP32' : isEsp8266 ? 'ESP8266' : isPico ? 'PICO' : 'MCU';
+
+    if (isEsp32) {
+      return (
+        <svg width={width} height={height} viewBox="0 0 60 30" className="overflow-visible shrink-0">
+          <rect x="8" y="3" width="44" height="24" rx="2" fill="#090d16" stroke="#38bdf8" strokeWidth="1.5" />
+          <text x="30" y="14" textAnchor="middle" fill="#38bdf8" fontSize="6.5" fontFamily="monospace" fontWeight="bold">
+            ESP32
+          </text>
+          <text x="30" y="21" textAnchor="middle" fill="#22c55e" fontSize="5" fontFamily="monospace" fontWeight="bold">
+            30-PIN
+          </text>
+          <circle cx="12" cy="7" r="1.2" fill="#38bdf8" />
+          {[6, 10, 14, 18, 22].map((y) => (
+            <React.Fragment key={y}>
+              <line x1="2" y1={y} x2="8" y2={y} stroke="#38bdf8" strokeWidth="1.2" />
+              <line x1="52" y1={y} x2="58" y2={y} stroke="#38bdf8" strokeWidth="1.2" />
+            </React.Fragment>
+          ))}
+        </svg>
+      );
+    }
 
     return (
       <svg width={width} height={height} viewBox="0 0 60 30" className="overflow-visible shrink-0">

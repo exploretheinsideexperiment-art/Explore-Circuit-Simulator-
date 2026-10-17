@@ -272,5 +272,71 @@ export const SUPPORTED_BOARDS: Record<string, BoardSpecification> = {
       { id: 'GND_4', name: 'GND', label: 'GND', type: 'power_gnd', x: 120, y: 41, voltage: 0 },
       { id: '3V3_3', name: '3V3', label: '3V3', type: 'power_vcc', x: 120, y: 28, voltage: 3.3 }
     ]
+  },
+
+  'arduino-mega': {
+    id: 'arduino-mega',
+    name: 'Arduino Mega 2560 R3',
+    family: 'Arduino',
+    voltage: 5.0,
+    flashSize: '256KB',
+    frequency: '16MHz',
+    builtInLedPin: '13',
+    defaultLanguage: 'cpp',
+    width: 380,
+    height: 190,
+    description: 'ATmega2560 board with 54 digital I/O, 16 analog inputs, and 4 hardware UARTs.',
+    pins: [
+      { id: '5V', name: '5V', label: '5V', type: 'power_vcc', x: 134, y: 170, voltage: 5.0 },
+      { id: '3V3', name: '3.3V', label: '3.3V', type: 'power_vcc', x: 120, y: 170, voltage: 3.3 },
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 148, y: 170, voltage: 0 },
+      { id: 'VIN', name: 'VIN', label: 'VIN', type: 'power_vcc', x: 176, y: 170, voltage: 9.0 },
+      { id: 'A0', name: 'A0', label: 'A0', type: 'analog', x: 204, y: 170 },
+      { id: 'A1', name: 'A1', label: 'A1', type: 'analog', x: 218, y: 170 },
+      { id: 'A2', name: 'A2', label: 'A2', type: 'analog', x: 232, y: 170 },
+      { id: 'A3', name: 'A3', label: 'A3', type: 'analog', x: 246, y: 170 },
+      { id: 'A4', name: 'A4', label: 'A4', type: 'analog', x: 260, y: 170 },
+      { id: 'A5', name: 'A5', label: 'A5', type: 'analog', x: 274, y: 170 },
+      { id: '13', name: 'D13', label: '13', type: 'gpio', x: 116, y: 10 },
+      { id: '12', name: 'D12', label: '12', type: 'gpio', x: 130, y: 10 },
+      { id: '11', name: 'D11', label: '~11', type: 'pwm', x: 144, y: 10 },
+      { id: '10', name: 'D10', label: '~10', type: 'pwm', x: 158, y: 10 },
+      { id: '9', name: 'D9', label: '~9', type: 'pwm', x: 172, y: 10 },
+      { id: '8', name: 'D8', label: '8', type: 'gpio', x: 186, y: 10 },
+      { id: '7', name: 'D7', label: '7', type: 'gpio', x: 204, y: 10 },
+      { id: '6', name: 'D6', label: '~6', type: 'pwm', x: 218, y: 10 },
+      { id: '5', name: 'D5', label: '~5', type: 'pwm', x: 232, y: 10 },
+      { id: '4', name: 'D4', label: '4', type: 'gpio', x: 246, y: 10 },
+      { id: '3', name: 'D3', label: '~3', type: 'pwm', x: 260, y: 10 },
+      { id: '2', name: 'D2', label: '2', type: 'gpio', x: 274, y: 10 },
+      { id: '1', name: 'TX0/1', label: 'TX0', type: 'uart_tx', x: 288, y: 10 },
+      { id: '0', name: 'RX0/0', label: 'RX0', type: 'uart_rx', x: 302, y: 10 },
+      { id: 'SDA', name: 'SDA/20', label: 'SDA', type: 'i2c_sda', x: 340, y: 80 },
+      { id: 'SCL', name: 'SCL/21', label: 'SCL', type: 'i2c_scl', x: 340, y: 100 }
+    ]
+  },
+
+  'esp8266-esp01': {
+    id: 'esp8266-esp01',
+    name: 'ESP8266 ESP-01 Wi-Fi Module',
+    family: 'ESP',
+    voltage: 3.3,
+    flashSize: '1MB',
+    frequency: '80MHz',
+    builtInLedPin: '1',
+    defaultLanguage: 'cpp',
+    width: 90,
+    height: 120,
+    description: 'Compact 8-pin ESP8266 serial WiFi transceiver module.',
+    pins: [
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 25, y: 25, voltage: 0 },
+      { id: 'GPIO1', name: 'TX / GPIO1', label: 'TX', type: 'uart_tx', x: 25, y: 50 },
+      { id: 'GPIO2', name: 'GPIO2', label: 'IO2', type: 'gpio', x: 25, y: 75 },
+      { id: 'CH_PD', name: 'CH_PD / EN', label: 'EN', type: 'input', x: 25, y: 100 },
+      { id: 'GPIO0', name: 'GPIO0', label: 'IO0', type: 'gpio', x: 65, y: 25 },
+      { id: 'RESET', name: 'RESET', label: 'RST', type: 'input', x: 65, y: 50 },
+      { id: 'GPIO3', name: 'RX / GPIO3', label: 'RX', type: 'uart_rx', x: 65, y: 75 },
+      { id: 'VCC', name: 'VCC (3.3V)', label: 'VCC', type: 'power_vcc', x: 65, y: 100, voltage: 3.3 }
+    ]
   }
 };

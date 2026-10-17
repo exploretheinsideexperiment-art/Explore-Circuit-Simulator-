@@ -14,7 +14,7 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
     description: '30-pin dual-core ESP32 WiFi & Bluetooth microcontroller board.',
     width: 140,
     height: 270,
-    pins: [], // populated from boards.ts
+    pins: SUPPORTED_BOARDS['esp32-devkit-v1']?.pins || [],
     defaultProperties: {
       boardId: 'esp32-devkit-v1',
       label: 'ESP32 DevKit'
@@ -27,7 +27,7 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
     description: 'Classic ATmega328P Arduino board with 14 digital and 6 analog pins.',
     width: 320,
     height: 180,
-    pins: [], // populated from boards.ts
+    pins: SUPPORTED_BOARDS['arduino-uno']?.pins || [],
     defaultProperties: {
       boardId: 'arduino-uno',
       label: 'Arduino UNO'
@@ -40,7 +40,7 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
     description: 'RP2040 dual-core ARM Cortex-M0+ with MicroPython and C++.',
     width: 130,
     height: 270,
-    pins: [],
+    pins: SUPPORTED_BOARDS['raspberry-pi-pico']?.pins || [],
     defaultProperties: {
       boardId: 'raspberry-pi-pico',
       label: 'RPi Pico'
@@ -53,7 +53,7 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
     description: 'Compact breadboard-friendly ATmega328P Arduino board with 14 digital and 8 analog pins.',
     width: 100,
     height: 200,
-    pins: [],
+    pins: SUPPORTED_BOARDS['arduino-nano']?.pins || [],
     defaultProperties: {
       boardId: 'arduino-nano',
       label: 'Arduino Nano'
@@ -70,6 +70,32 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
     defaultProperties: {
       boardId: 'esp8266-nodemcu',
       label: 'ESP8266 NodeMCU'
+    }
+  },
+  {
+    type: 'mcu-arduino-mega',
+    name: 'Arduino Mega 2560 R3',
+    category: 'Arduino',
+    description: 'High-performance ATmega2560 board with 54 digital I/O pins, 16 analog inputs, and 4 UARTs.',
+    width: 380,
+    height: 190,
+    pins: [],
+    defaultProperties: {
+      boardId: 'arduino-mega',
+      label: 'Arduino Mega'
+    }
+  },
+  {
+    type: 'mcu-esp8266-esp01',
+    name: 'ESP8266 ESP-01 Wi-Fi Module',
+    category: 'ESP Boards',
+    description: 'Ultra-compact 8-pin serial Wi-Fi transceiver module for IoT & wireless microcontrollers.',
+    width: 90,
+    height: 120,
+    pins: [],
+    defaultProperties: {
+      boardId: 'esp8266-esp01',
+      label: 'ESP-01 Wi-Fi'
     }
   },
 
@@ -141,7 +167,55 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
       { id: 'ROW_24_BOT', name: 'Row 24 (F-J)', label: '24B', type: 'passive', x: 355, y: 104 },
     ],
     defaultProperties: {
-      label: 'Breadboard'
+      label: 'Half Breadboard'
+    }
+  },
+  {
+    type: 'breadboard-full',
+    name: 'Full-Size Solderless Breadboard',
+    category: 'Connectors',
+    description: 'Full-size 60-column 830-point solderless breadboard with split power distribution rails, matching standard lab breadboard.',
+    width: 580,
+    height: 165,
+    pins: [
+      // Top power rails (+, -)
+      { id: 'T_VCC_1', name: 'Top Left + (VCC)', label: '+', type: 'passive', x: 25, y: 15 },
+      { id: 'T_GND_1', name: 'Top Left - (GND)', label: '-', type: 'passive', x: 25, y: 28 },
+      { id: 'T_VCC_2', name: 'Top Mid + (VCC)', label: '+', type: 'passive', x: 140, y: 15 },
+      { id: 'T_GND_2', name: 'Top Mid - (GND)', label: '-', type: 'passive', x: 140, y: 28 },
+      { id: 'T_VCC_3', name: 'Top Right + (VCC)', label: '+', type: 'passive', x: 280, y: 15 },
+      { id: 'T_GND_3', name: 'Top Right - (GND)', label: '-', type: 'passive', x: 280, y: 28 },
+      { id: 'T_VCC_4', name: 'Top Far Right + (VCC)', label: '+', type: 'passive', x: 420, y: 15 },
+      { id: 'T_GND_4', name: 'Top Far Right - (GND)', label: '-', type: 'passive', x: 420, y: 28 },
+      { id: 'T_VCC_5', name: 'Top End + (VCC)', label: '+', type: 'passive', x: 540, y: 15 },
+      { id: 'T_GND_5', name: 'Top End - (GND)', label: '-', type: 'passive', x: 540, y: 28 },
+
+      // Bottom power rails (+, -)
+      { id: 'B_VCC_1', name: 'Bot Left + (VCC)', label: '+', type: 'passive', x: 25, y: 135 },
+      { id: 'B_GND_1', name: 'Bot Left - (GND)', label: '-', type: 'passive', x: 25, y: 148 },
+      { id: 'B_VCC_2', name: 'Bot Mid + (VCC)', label: '+', type: 'passive', x: 140, y: 135 },
+      { id: 'B_GND_2', name: 'Bot Mid - (GND)', label: '-', type: 'passive', x: 140, y: 148 },
+      { id: 'B_VCC_3', name: 'Bot Right + (VCC)', label: '+', type: 'passive', x: 280, y: 135 },
+      { id: 'B_GND_3', name: 'Bot Right - (GND)', label: '-', type: 'passive', x: 280, y: 148 },
+      { id: 'B_VCC_4', name: 'Bot Far Right + (VCC)', label: '+', type: 'passive', x: 420, y: 135 },
+      { id: 'B_GND_4', name: 'Bot Far Right - (GND)', label: '-', type: 'passive', x: 420, y: 148 },
+      { id: 'B_VCC_5', name: 'Bot End + (VCC)', label: '+', type: 'passive', x: 540, y: 135 },
+      { id: 'B_GND_5', name: 'Bot End - (GND)', label: '-', type: 'passive', x: 540, y: 148 },
+
+      // Column tie-point terminals
+      { id: 'COL_5_TOP', name: 'Col 5 (A-E)', label: '5T', type: 'passive', x: 60, y: 56 },
+      { id: 'COL_5_BOT', name: 'Col 5 (F-J)', label: '5B', type: 'passive', x: 60, y: 104 },
+      { id: 'COL_15_TOP', name: 'Col 15 (A-E)', label: '15T', type: 'passive', x: 150, y: 56 },
+      { id: 'COL_15_BOT', name: 'Col 15 (F-J)', label: '15B', type: 'passive', x: 150, y: 104 },
+      { id: 'COL_30_TOP', name: 'Col 30 (A-E)', label: '30T', type: 'passive', x: 285, y: 56 },
+      { id: 'COL_30_BOT', name: 'Col 30 (F-J)', label: '30B', type: 'passive', x: 285, y: 104 },
+      { id: 'COL_45_TOP', name: 'Col 45 (A-E)', label: '45T', type: 'passive', x: 420, y: 56 },
+      { id: 'COL_45_BOT', name: 'Col 45 (F-J)', label: '45B', type: 'passive', x: 420, y: 104 },
+      { id: 'COL_55_TOP', name: 'Col 55 (A-E)', label: '55T', type: 'passive', x: 520, y: 56 },
+      { id: 'COL_55_BOT', name: 'Col 55 (F-J)', label: '55B', type: 'passive', x: 520, y: 104 },
+    ],
+    defaultProperties: {
+      label: 'Full Breadboard'
     }
   },
 
@@ -722,6 +796,264 @@ export const COMPONENT_CATALOG: ComponentTemplate[] = [
       isOpen: true,
       activeLed: false,
       label: 'RELAY1'
+    }
+  },
+  {
+    type: 'module-relay-2ch',
+    name: '2-Channel 5V Relay Module',
+    category: 'Modules',
+    description: 'Dual electromechanical relays with optocoupler isolation, independent NO/COM/NC contacts.',
+    width: 110,
+    height: 90,
+    pins: [
+      { id: 'VCC', name: 'VCC (5V)', label: 'VCC', type: 'power_vcc', x: 12, y: 22, voltage: 5.0 },
+      { id: 'IN1', name: 'Channel 1 IN', label: 'IN1', type: 'input', x: 12, y: 38 },
+      { id: 'IN2', name: 'Channel 2 IN', label: 'IN2', type: 'input', x: 12, y: 54 },
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 12, y: 70, voltage: 0 },
+      { id: 'NO1', name: 'Relay 1 NO', label: 'NO1', type: 'passive', x: 98, y: 18 },
+      { id: 'COM1', name: 'Relay 1 COM', label: 'COM1', type: 'passive', x: 98, y: 32 },
+      { id: 'NC1', name: 'Relay 1 NC', label: 'NC1', type: 'passive', x: 98, y: 46 },
+      { id: 'NO2', name: 'Relay 2 NO', label: 'NO2', type: 'passive', x: 98, y: 60 },
+      { id: 'COM2', name: 'Relay 2 COM', label: 'COM2', type: 'passive', x: 98, y: 72 },
+      { id: 'NC2', name: 'Relay 2 NC', label: 'NC2', type: 'passive', x: 98, y: 84 },
+    ],
+    defaultProperties: {
+      ch1Open: true,
+      ch2Open: true,
+      label: 'RELAY2CH'
+    }
+  },
+  {
+    type: 'module-relay-4ch',
+    name: '4-Channel 5V Relay Module',
+    category: 'Modules',
+    description: '4-Channel optocoupled relay board for switching up to 4 high-power AC/DC loads.',
+    width: 140,
+    height: 95,
+    pins: [
+      { id: 'VCC', name: 'VCC (5V)', label: 'VCC', type: 'power_vcc', x: 12, y: 18, voltage: 5.0 },
+      { id: 'IN1', name: 'IN 1', label: 'IN1', type: 'input', x: 12, y: 32 },
+      { id: 'IN2', name: 'IN 2', label: 'IN2', type: 'input', x: 12, y: 46 },
+      { id: 'IN3', name: 'IN 3', label: 'IN3', type: 'input', x: 12, y: 60 },
+      { id: 'IN4', name: 'IN 4', label: 'IN4', type: 'input', x: 12, y: 74 },
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 12, y: 88, voltage: 0 },
+      { id: 'NO1', name: 'Relay 1 NO', label: 'NO1', type: 'passive', x: 128, y: 16 },
+      { id: 'COM1', name: 'Relay 1 COM', label: 'COM1', type: 'passive', x: 128, y: 28 },
+      { id: 'NC1', name: 'Relay 1 NC', label: 'NC1', type: 'passive', x: 128, y: 40 },
+      { id: 'NO2', name: 'Relay 2 NO', label: 'NO2', type: 'passive', x: 128, y: 52 },
+      { id: 'COM2', name: 'Relay 2 COM', label: 'COM2', type: 'passive', x: 128, y: 64 },
+      { id: 'NC2', name: 'Relay 2 NC', label: 'NC2', type: 'passive', x: 128, y: 76 },
+    ],
+    defaultProperties: {
+      label: 'RELAY4CH'
+    }
+  },
+  {
+    type: 'power-supply-mb102',
+    name: 'MB-102 Breadboard Power Module',
+    category: 'Modules',
+    description: 'Plug-in breadboard power module with dual 3.3V / 5.0V regulated outputs, DC jack and USB-A port.',
+    width: 130,
+    height: 75,
+    pins: [
+      { id: 'VCC_A', name: 'Rail A VCC (3.3V/5V)', label: 'VCC', type: 'power_vcc', x: 16, y: 62, voltage: 5.0 },
+      { id: 'GND_A', name: 'Rail A GND', label: 'GND', type: 'power_gnd', x: 30, y: 62, voltage: 0 },
+      { id: 'VCC_B', name: 'Rail B VCC (3.3V/5V)', label: 'VCC', type: 'power_vcc', x: 100, y: 62, voltage: 5.0 },
+      { id: 'GND_B', name: 'Rail B GND', label: 'GND', type: 'power_gnd', x: 114, y: 62, voltage: 0 },
+    ],
+    defaultProperties: {
+      railA: '5V',
+      railB: '3.3V',
+      isOn: true,
+      label: 'MB102 PWR'
+    }
+  },
+  {
+    type: 'sensor-dht11',
+    name: 'DHT11 Temp & Humidity Sensor',
+    category: 'Sensors',
+    description: 'Basic digital temperature and humidity sensor with single-wire serial data protocol.',
+    width: 60,
+    height: 70,
+    pins: [
+      { id: 'VCC', name: 'VCC (3.3V - 5V)', label: 'VCC', type: 'power_vcc', x: 14, y: 62, voltage: 5.0 },
+      { id: 'DATA', name: 'Data Signal', label: 'DAT', type: 'gpio', x: 30, y: 62 },
+      { id: 'NC', name: 'Null / Unused', label: 'NC', type: 'passive', x: 42, y: 62 },
+      { id: 'GND', name: 'Ground', label: 'GND', type: 'power_gnd', x: 50, y: 62, voltage: 0 },
+    ],
+    defaultProperties: {
+      temperature: 24.0,
+      humidity: 50.0,
+      label: 'DHT11'
+    }
+  },
+  {
+    type: 'sensor-ldr-module',
+    name: 'LDR Light Sensor Module (LM393)',
+    category: 'Sensors',
+    description: 'Optical detection module with onboard photoresistor, LM393 voltage comparator, and trim potentiometer.',
+    width: 80,
+    height: 60,
+    pins: [
+      { id: 'VCC', name: 'VCC (3.3V - 5V)', label: 'VCC', type: 'power_vcc', x: 12, y: 15, voltage: 5.0 },
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 12, y: 28, voltage: 0 },
+      { id: 'DO', name: 'Digital Out (DO)', label: 'DO', type: 'output', x: 12, y: 41 },
+      { id: 'AO', name: 'Analog Out (AO)', label: 'AO', type: 'analog', x: 12, y: 52 },
+    ],
+    defaultProperties: {
+      threshold: 50,
+      lux: 350,
+      label: 'LDR MOD'
+    }
+  },
+  {
+    type: 'sensor-sound',
+    name: 'Sound / Microphone Sensor Module',
+    category: 'Sensors',
+    description: 'Acoustic detector with electret microphone and LM393 comparator for detecting claps and noise.',
+    width: 80,
+    height: 60,
+    pins: [
+      { id: 'VCC', name: 'VCC (5V)', label: 'VCC', type: 'power_vcc', x: 12, y: 15, voltage: 5.0 },
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 12, y: 28, voltage: 0 },
+      { id: 'DO', name: 'Digital Out', label: 'DO', type: 'output', x: 12, y: 41 },
+      { id: 'AO', name: 'Analog Out', label: 'AO', type: 'analog', x: 12, y: 52 },
+    ],
+    defaultProperties: {
+      threshold: 60,
+      soundLevel: 30,
+      label: 'SOUND'
+    }
+  },
+  {
+    type: 'sensor-soil-moisture',
+    name: 'Soil Moisture Sensor Module',
+    category: 'Sensors',
+    description: 'Resistive dual-probe soil moisture sensor with LM393 amplifier board for smart plant watering.',
+    width: 85,
+    height: 60,
+    pins: [
+      { id: 'VCC', name: 'VCC (3.3V - 5V)', label: 'VCC', type: 'power_vcc', x: 12, y: 15, voltage: 5.0 },
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 12, y: 28, voltage: 0 },
+      { id: 'DO', name: 'Digital Out', label: 'DO', type: 'output', x: 12, y: 41 },
+      { id: 'AO', name: 'Analog Out', label: 'AO', type: 'analog', x: 12, y: 52 },
+    ],
+    defaultProperties: {
+      moisturePercent: 45,
+      label: 'SOIL'
+    }
+  },
+  {
+    type: 'sensor-ir-obstacle',
+    name: 'IR Obstacle Avoidance Sensor',
+    category: 'Sensors',
+    description: 'Infrared transmitter and photodiode receiver pair with comparator for obstacle detection in robotics.',
+    width: 80,
+    height: 55,
+    pins: [
+      { id: 'VCC', name: 'VCC (3.3V - 5V)', label: 'VCC', type: 'power_vcc', x: 12, y: 18, voltage: 5.0 },
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 12, y: 32, voltage: 0 },
+      { id: 'OUT', name: 'Output Signal (Active LOW)', label: 'OUT', type: 'output', x: 12, y: 46 },
+    ],
+    defaultProperties: {
+      detected: false,
+      distanceMm: 50,
+      label: 'IR OBS'
+    }
+  },
+  {
+    type: 'sensor-gas-mq2',
+    name: 'MQ-2 Gas & Smoke Detector',
+    category: 'Sensors',
+    description: 'Gas sensor detecting LPG, propane, methane, alcohol, and smoke for safety alarms.',
+    width: 80,
+    height: 70,
+    pins: [
+      { id: 'VCC', name: 'VCC (5V)', label: 'VCC', type: 'power_vcc', x: 12, y: 18, voltage: 5.0 },
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 12, y: 32, voltage: 0 },
+      { id: 'DO', name: 'Digital Out', label: 'DO', type: 'output', x: 12, y: 46 },
+      { id: 'AO', name: 'Analog Out', label: 'AO', type: 'analog', x: 12, y: 58 },
+    ],
+    defaultProperties: {
+      ppm: 80,
+      label: 'MQ-2'
+    }
+  },
+  {
+    type: 'sensor-flame',
+    name: 'Flame / Fire Sensor Module',
+    category: 'Sensors',
+    description: 'High-sensitivity infrared flame sensor sensitive to fire wavelengths (760nm - 1100nm).',
+    width: 80,
+    height: 55,
+    pins: [
+      { id: 'VCC', name: 'VCC (3.3V - 5V)', label: 'VCC', type: 'power_vcc', x: 12, y: 18, voltage: 5.0 },
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 12, y: 32, voltage: 0 },
+      { id: 'DO', name: 'Digital Out', label: 'DO', type: 'output', x: 12, y: 46 },
+      { id: 'AO', name: 'Analog Out', label: 'AO', type: 'analog', x: 12, y: 58 },
+    ],
+    defaultProperties: {
+      isFlame: false,
+      label: 'FLAME'
+    }
+  },
+  {
+    type: 'sensor-rain',
+    name: 'Rain / Water Level Sensor',
+    category: 'Sensors',
+    description: 'Tinned conductive trace detection board for rain drops, water level, and moisture alarms.',
+    width: 85,
+    height: 60,
+    pins: [
+      { id: 'VCC', name: 'VCC (3.3V - 5V)', label: 'VCC', type: 'power_vcc', x: 12, y: 18, voltage: 5.0 },
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 12, y: 32, voltage: 0 },
+      { id: 'DO', name: 'Digital Out', label: 'DO', type: 'output', x: 12, y: 46 },
+      { id: 'AO', name: 'Analog Out', label: 'AO', type: 'analog', x: 12, y: 58 },
+    ],
+    defaultProperties: {
+      isRaining: false,
+      waterLevel: 0,
+      label: 'RAIN'
+    }
+  },
+  {
+    type: 'motor-stepper-28byj',
+    name: 'Stepper Motor + ULN2003 Driver',
+    category: 'Motors',
+    description: '4-phase 5V 28BYJ-48 geared stepper motor paired with ULN2003 Darlington transistor driver board.',
+    width: 120,
+    height: 90,
+    pins: [
+      { id: 'IN1', name: 'Phase A (IN1)', label: 'IN1', type: 'input', x: 14, y: 22 },
+      { id: 'IN2', name: 'Phase B (IN2)', label: 'IN2', type: 'input', x: 14, y: 38 },
+      { id: 'IN3', name: 'Phase C (IN3)', label: 'IN3', type: 'input', x: 14, y: 54 },
+      { id: 'IN4', name: 'Phase D (IN4)', label: 'IN4', type: 'input', x: 14, y: 70 },
+      { id: 'VCC', name: '5V Power (+)', label: 'VCC', type: 'power_vcc', x: 60, y: 76, voltage: 5.0 },
+      { id: 'GND', name: 'Ground (-)', label: 'GND', type: 'power_gnd', x: 78, y: 76, voltage: 0 },
+    ],
+    defaultProperties: {
+      stepAngle: 0,
+      rpm: 0,
+      label: 'STEPPER'
+    }
+  },
+  {
+    type: 'display-tm1637-4digit',
+    name: '4-Digit 7-Segment Display (TM1637)',
+    category: 'Displays',
+    description: '0.36" 4-digit red numeric LED display module with colon and TM1637 2-wire serial driver.',
+    width: 110,
+    height: 60,
+    pins: [
+      { id: 'GND', name: 'GND', label: 'GND', type: 'power_gnd', x: 12, y: 16, voltage: 0 },
+      { id: 'VCC', name: 'VCC (5V)', label: 'VCC', type: 'power_vcc', x: 12, y: 28, voltage: 5.0 },
+      { id: 'DIO', name: 'Data I/O (DIO)', label: 'DIO', type: 'gpio', x: 12, y: 40 },
+      { id: 'CLK', name: 'Clock (CLK)', label: 'CLK', type: 'input', x: 12, y: 52 },
+    ],
+    defaultProperties: {
+      text: '12:00',
+      brightness: 7,
+      label: 'TM1637'
     }
   },
 
@@ -1410,7 +1742,15 @@ export function getTemplateByType(type: string): ComponentTemplate | undefined {
  */
 export function getComponentPins(comp: CircuitComponent): PinDef[] {
   if (comp.type.startsWith('mcu-')) {
-    const boardId = comp.properties?.boardId || 'esp32-devkit-v1';
+    const rawBoardId = comp.properties?.boardId || comp.type.replace('mcu-', '') || 'arduino-uno';
+    const boardId = SUPPORTED_BOARDS[rawBoardId] ? rawBoardId :
+      rawBoardId.includes('mega') ? 'arduino-mega' :
+      rawBoardId.includes('uno') ? 'arduino-uno' :
+      rawBoardId.includes('nano') ? 'arduino-nano' :
+      rawBoardId.includes('esp01') || rawBoardId.includes('esp-01') ? 'esp8266-esp01' :
+      rawBoardId.includes('esp8266') || rawBoardId.includes('nodemcu') ? 'esp8266-nodemcu' :
+      rawBoardId.includes('pico') ? 'raspberry-pi-pico' :
+      rawBoardId.includes('esp32') ? 'esp32-devkit-v1' : 'arduino-uno';
     return SUPPORTED_BOARDS[boardId]?.pins || [];
   }
 
@@ -1426,7 +1766,7 @@ export function getComponentPins(comp: CircuitComponent): PinDef[] {
 
 /**
  * Smart pin resolver that finds pin by ID, label, name, or common engineering aliases
- * (e.g. D13 <-> 13, PIN_1 <-> PIN1, G <-> GATE, GND <-> GND_TOP, 5V <-> VCC)
+ * (e.g. D13 <-> 13, PIN_1 <-> PIN1, G <-> GATE, GND <-> GND_TOP, 5V <-> VCC, POS <-> ANODE)
  */
 export function findPinDef(pins: PinDef[], pinId: string): PinDef | undefined {
   if (!pins || pins.length === 0) return undefined;
@@ -1439,23 +1779,23 @@ export function findPinDef(pins: PinDef[], pinId: string): PinDef | undefined {
   const caseMatch = pins.find((p) => p.id.toLowerCase() === lower);
   if (caseMatch) return caseMatch;
 
-  // 3. Normalized number / GPIO / D prefix (e.g. D13 <-> 13, GPIO2 <-> 2, D2 <-> 2)
-  const normPin = pinId.toUpperCase().replace(/^(GPIO|IO|D|PIN_|PIN)/, '');
+  // 3. Normalized number / GPIO / D prefix (e.g. D13 <-> 13, GPIO2 <-> 2, D2 <-> 2, ~11 <-> 11)
+  const normPin = pinId.toUpperCase().replace(/^(GPIO|IO|D|PIN_|PIN|~)/, '');
   if (normPin.length > 0) {
     const matchNum = pins.find((p) => {
-      const pNorm = p.id.toUpperCase().replace(/^(GPIO|IO|D|PIN_|PIN)/, '');
+      const pNorm = p.id.toUpperCase().replace(/^(GPIO|IO|D|PIN_|PIN|~)/, '');
       return pNorm === normPin || p.label === pinId || p.name === pinId || p.label === `D${normPin}` || p.label === `~${normPin}`;
     });
     if (matchNum) return matchNum;
   }
 
-  // 4. Pin 1 / Pin 2 aliases (PIN1 <-> PIN_1 <-> P1 <-> 1 <-> T1 <-> POS <-> A)
-  if (['PIN_1', 'PIN1', '1', 'T1', 'P1', 'PRI1'].includes(pinId.toUpperCase())) {
-    const p1 = pins.find((p) => ['PIN1', 'PIN_1', '1', 'T1', 'P1', 'POS', 'ANODE', 'A', 'PRI1'].includes(p.id.toUpperCase()));
+  // 4. Pin 1 / Pin 2 / Positive / Negative / Anode / Cathode aliases
+  if (['PIN_1', 'PIN1', '1', 'T1', 'P1', 'PRI1', 'POS', '+', 'ANODE', 'A'].includes(pinId.toUpperCase())) {
+    const p1 = pins.find((p) => ['PIN1', 'PIN_1', '1', 'T1', 'P1', 'POS', '+', 'ANODE', 'A', 'PRI1'].includes(p.id.toUpperCase()) || p.type === 'power_vcc');
     if (p1) return p1;
   }
-  if (['PIN_2', 'PIN2', '2', 'T2', 'P2', 'SEC1'].includes(pinId.toUpperCase())) {
-    const p2 = pins.find((p) => ['PIN2', 'PIN_2', '2', 'T2', 'P2', 'NEG', 'CATHODE', 'K', 'SEC1'].includes(p.id.toUpperCase()));
+  if (['PIN_2', 'PIN2', '2', 'T2', 'P2', 'SEC1', 'NEG', '-', 'CATHODE', 'K'].includes(pinId.toUpperCase())) {
+    const p2 = pins.find((p) => ['PIN2', 'PIN_2', '2', 'T2', 'P2', 'NEG', '-', 'CATHODE', 'K', 'SEC1'].includes(p.id.toUpperCase()) || p.type === 'power_gnd');
     if (p2) return p2;
   }
 
@@ -1473,10 +1813,26 @@ export function findPinDef(pins: PinDef[], pinId: string): PinDef | undefined {
     'COLLECTOR': ['COLLECTOR', 'C'],
     'E': ['EMITTER', 'E'],
     'EMITTER': ['EMITTER', 'E'],
-    'A': ['ANODE', 'A', 'POS', '+'],
-    'ANODE': ['ANODE', 'A', 'POS', '+'],
-    'K': ['CATHODE', 'K', 'NEG', '-'],
-    'CATHODE': ['CATHODE', 'K', 'NEG', '-'],
+    'A': ['ANODE', 'A', 'POS', '+', '1'],
+    'ANODE': ['ANODE', 'A', 'POS', '+', '1'],
+    'K': ['CATHODE', 'K', 'NEG', '-', '2'],
+    'CATHODE': ['CATHODE', 'K', 'NEG', '-', '2'],
+    'TRIG': ['TRIG', 'TRIGGER'],
+    'ECHO': ['ECHO'],
+    'PWM': ['PWM', 'SIG', 'SIGNAL', 'IN'],
+    'SIG': ['PWM', 'SIG', 'SIGNAL', 'IN'],
+    'NO': ['NO'],
+    'COM': ['COM'],
+    'NC': ['NC'],
+    'IN': ['IN', 'SIG', 'PWM'],
+    'SDA': ['SDA', 'D21', '21', 'A4'],
+    'SCL': ['SCL', 'D22', '22', 'A5'],
+    'EN': ['EN', 'RESET', 'RST', 'CHIP_PU'],
+    'RESET': ['EN', 'RESET', 'RST', 'CHIP_PU'],
+    'VP': ['VP', '36', 'D36', 'GPIO36', 'SENSOR_VP'],
+    'VN': ['VN', '39', 'D39', 'GPIO39', 'SENSOR_VN'],
+    'TX': ['TX', 'TX0', '1', 'D1', 'GPIO1'],
+    'RX': ['RX', 'RX0', '3', 'D3', 'GPIO3'],
   };
   const aliases = mapAliases[pinId.toUpperCase()];
   if (aliases) {
@@ -1484,15 +1840,15 @@ export function findPinDef(pins: PinDef[], pinId: string): PinDef | undefined {
     if (found) return found;
   }
 
-  // 6. Ground aliases (GND, GND_TOP, GND_L, GND_R, GND_1, GND_B1, etc.)
-  if (pinId.toUpperCase().includes('GND')) {
-    const gnd = pins.find((p) => p.id.toUpperCase().includes('GND') || p.type === 'power_gnd');
+  // 6. Ground aliases (GND, GND_TOP, GND_L, GND_R, GND_1, GND_2, GND_3, GND_4, GND_B1, etc.)
+  if (pinId.toUpperCase().includes('GND') || pinId.toUpperCase() === 'NEG' || pinId === '-') {
+    const gnd = pins.find((p) => p.id.toUpperCase().includes('GND') || p.id.toUpperCase() === 'NEG' || p.id === '-' || p.type === 'power_gnd');
     if (gnd) return gnd;
   }
 
-  // 7. Power VCC aliases (5V, 3V3, 3.3V, VCC, V+, VIN)
-  if (['5V', 'VCC', 'V+'].includes(pinId.toUpperCase())) {
-    const vcc = pins.find((p) => ['5V', 'VCC', 'V+'].includes(p.id.toUpperCase()) || p.type === 'power_vcc');
+  // 7. Power VCC aliases (5V, 3V3, 3.3V, VCC, V+, VIN, POS, +)
+  if (['5V', 'VCC', 'V+', 'VIN', 'POS', '+'].includes(pinId.toUpperCase())) {
+    const vcc = pins.find((p) => ['5V', 'VCC', 'V+', 'VIN', 'POS', '+'].includes(p.id.toUpperCase()) || p.type === 'power_vcc');
     if (vcc) return vcc;
   }
   if (['3V3', '3.3V'].includes(pinId.toUpperCase())) {

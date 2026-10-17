@@ -775,9 +775,12 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
           title="Drag to move Oscilloscope anywhere across workspace"
         >
           <div className="flex items-center gap-1.5 pointer-events-none">
-            <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-sm animate-pulse" />
-            <span className="text-[11px] font-black tracking-wider text-slate-200 font-mono flex items-center gap-1">
-              ECS-DSO3000 <span className="text-[9px] text-cyan-400 font-normal">PRO SCOPE</span>
+            <div className="w-3.5 h-3.5 rounded-xs bg-slate-800 border border-slate-600 flex items-center justify-center text-[7.5px] font-black text-white">
+              R
+            </div>
+            <span className="text-[11px] font-black tracking-wider text-slate-100 font-mono flex items-center gap-1.5">
+              MHO984 <span className="text-[9px] text-amber-400 font-bold bg-amber-950/80 px-1 rounded-xs border border-amber-600/60">800MHz 12bit</span>
+              <span className="text-[9px] italic font-serif text-slate-300">UltraVision</span>
             </span>
           </div>
 

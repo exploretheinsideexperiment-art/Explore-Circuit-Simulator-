@@ -54,6 +54,8 @@ export type ComponentCategory =
   | 'Modules'
   | 'Audio'
   | 'Connectors'
+  | 'Instruments'
+  | 'Breadboard'
   | 'Other';
 
 export interface ComponentTemplate {
